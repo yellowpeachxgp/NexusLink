@@ -1,0 +1,50 @@
+# Dependencies
+/target/
+**/target/
+
+# Flutter
+client/flutter/.dart_tool/
+client/flutter/.packages
+client/flutter/.pub-cache/
+client/flutter/.pub/
+client/flutter/build/
+client/flutter/.flutter-plugins
+client/flutter/.flutter-plugins-dependencies
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Secrets
+*.pem
+*.key
+*.p12
+credentials.json
+
+# Build artifacts
+*.so
+*.dylib
+*.dll
+*.exe
+
+# Database
+*.db
+*.sqlite
+
+# Logs
+*.log
+logs/
+
+# Coverage
+coverage/
+*.lcov
