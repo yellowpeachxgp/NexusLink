@@ -65,24 +65,200 @@ NexusLink 是一个三层混合架构即时通讯系统：
 
 ## 2. Identity System / 身份系统
 
-### 2.1 Key Hierarchy / 密钥层级
+### 2.0 Design Philosophy: Choice over Mandate / 设计理念：选择而非强制
+
+NexusLink's entire design is built on giving users choice. This extends to identity security -- users should choose their own security level, not be forced into one.
+
+NexusLink 的整个设计都建立在给用户选择权之上。这也延伸到身份安全——用户应该自己选择安全级别，而不是被强制。
+
+```
+Identity Security Tiers / 身份安全分级：
+
+  ┌─────────────────────────────────────────────────────────────────┐
+  │                   User chooses at first launch                  │
+  │                   用户在首次启动时选择                             │
+  └───────────────────────────┬─────────────────────────────────────┘
+                              │
+          ┌───────────────────┼───────────────────┐
+          ▼                   ▼                   ▼
+  ┌───────────────┐  ┌────────────────┐  ┌────────────────────┐
+  │  Easy Mode    │  │ Standard Mode  │  │ Hardware Mode       │
+  │  便捷模式      │  │ 标准模式        │  │ 硬件模式             │
+  │               │  │                │  │                     │
+  │  Software key │  │ OS secure      │  │ External hardware   │
+  │  generated    │  │ storage auto-  │  │ key (YubiKey etc.)  │
+  │  in app       │  │ detected &     │  │ or dedicated secure │
+  │               │  │ used if avail. │  │ element             │
+  │  软件密钥      │  │                │  │                     │
+  │  App 内生成    │  │ 自动检测并使用  │  │ 外部硬件密钥         │
+  │               │  │ OS 安全存储     │  │ 或专用安全芯片        │
+  │  Door: open   │  │ Door: locked   │  │ Door: vault         │
+  │  门：开着的    │  │ 门：锁着的      │  │ 门：保险库           │
+  └───────────────┘  └────────────────┘  └────────────────────┘
+        │                   │                    │
+        │                   │                    │
+        ▼                   ▼                    ▼
+  Same UUID format    Same UUID format     Same UUID format
+  Same E2E protocol   Same E2E protocol    Same E2E protocol
+  Same user experience Same user experience Same user experience
+  相同 UUID 格式      相同 UUID 格式        相同 UUID 格式
+  相同 E2E 协议       相同 E2E 协议         相同 E2E 协议
+  相同用户体验        相同用户体验           相同用户体验
+```
+
+All three tiers produce the same UUID, use the same encryption protocol, and interoperate seamlessly. A Hardware Mode user chatting with an Easy Mode user sees no difference -- the security level only affects how the *user's own* private key is protected.
+
+三种级别生成相同的 UUID，使用相同的加密协议，完全无缝互操作。硬件模式用户和便捷模式用户聊天没有任何区别——安全级别只影响用户*自己的*私钥如何受保护。
+
+### 2.1 Identity Security Tiers / 身份安全分级详述
+
+```
+Tier 1: Easy Mode / 便捷模式（默认）
+──────────────────────────────────────
+  Target: Casual users, first-time explorers
+  目标用户：随便看看、初次体验的用户
+
+  Key generation: Ed25519 key pair generated in software (ring / ed25519-dalek)
+  密钥生成：Ed25519 密钥对在软件中生成
+
+  Key storage: OS keychain (encrypted by OS credentials)
+  密钥存储：OS 密钥链（受 OS 凭证加密保护）
+    iOS      → Keychain Services (kSecAttrAccessibleWhenUnlockedThisDeviceOnly)
+    Android  → Android Keystore (software-backed)
+    macOS    → Keychain
+    Windows  → DPAPI (Data Protection API)
+    Linux    → Secret Service API / libsecret
+
+  Mnemonic: Optional (user can skip and set up later)
+  助记词：可选（用户可以跳过，以后再设置）
+
+  Trade-off: Key is protected by OS login, but extractable by root/admin access.
+             Suitable for everyday use, like how most people use messaging apps today.
+  权衡：密钥受 OS 登录保护，但 root/admin 权限可提取。
+        适合日常使用，类似今天大部分人使用即时通讯应用的方式。
+
+
+Tier 2: Standard Mode / 标准模式（推荐）
+──────────────────────────────────────────
+  Target: Privacy-conscious users, community server operators
+  目标用户：重视隐私的用户、社区服务器运营者
+
+  Key generation: Ed25519 key pair, with hardware-backed protection if available
+  密钥生成：Ed25519 密钥对，如果设备支持则使用硬件保护
+
+  Key storage: Best available hardware on the device (auto-detected)
+  密钥存储：设备上可用的最佳硬件（自动检测）
+    iOS      → Secure Enclave (P-256 wrapping key protects Ed25519 seed)
+    Android  → StrongBox if available, else TEE-backed Keystore
+    macOS    → Secure Enclave (Apple Silicon / T2)
+    Windows  → TPM 2.0 if available, else DPAPI
+    Linux    → TPM 2.0 if available, else encrypted keyfile
+
+  Implementation detail / 实现细节：
+    Since most secure hardware natively supports P-256 but not Ed25519:
+    由于大部分安全硬件原生支持 P-256 但不支持 Ed25519：
+
+    1. Generate a P-256 "Device Wrapping Key" (DWK) inside secure hardware
+       在安全硬件中生成 P-256 "设备包装密钥" (DWK)
+    2. Generate Ed25519 Identity Key in software
+       在软件中生成 Ed25519 身份密钥
+    3. Encrypt Ed25519 private key with DWK (AES-256-GCM)
+       用 DWK 加密 Ed25519 私钥（AES-256-GCM）
+    4. Store encrypted blob; signing operations decrypt-in-memory, use, then zeroize
+       存储加密后的密钥；签名操作时在内存中解密、使用、然后清零
+
+  Mnemonic: Required (must write down before proceeding)
+  助记词：必须（继续之前必须抄写）
+
+  Trade-off: Private key never stored in plaintext. Hardware extraction requires
+             physical attack on secure element. Slight latency for key operations.
+  权衡：私钥永远不以明文存储。提取密钥需要对安全芯片进行物理攻击。
+        密钥操作有轻微延迟。
+
+
+Tier 3: Hardware Mode / 硬件模式（高级）
+──────────────────────────────────────────
+  Target: Journalists, activists, security professionals, high-value targets
+  目标用户：记者、活动人士、安全专业人员、高价值目标
+
+  Key generation: On external hardware device
+  密钥生成：在外部硬件设备上
+
+  Supported hardware / 支持的硬件：
+    - FIDO2 security keys (YubiKey 5, SoloKeys, Nitrokey)
+      FIDO2 安全密钥
+    - Smart cards (OpenPGP card, PIV)
+      智能卡
+    - Custom HSM via PKCS#11
+      通过 PKCS#11 的自定义 HSM
+
+  Key storage: Key NEVER leaves the hardware device
+  密钥存储：密钥永远不离开硬件设备
+
+  Signing: All signing operations happen on the hardware device
+  签名：所有签名操作在硬件设备上完成
+
+  Mnemonic: Hardware-specific backup method (varies by device)
+  助记词：硬件特定的备份方式（因设备而异）
+
+  Algorithm note / 算法说明：
+    - YubiKey 5+ supports Ed25519 natively
+      YubiKey 5+ 原生支持 Ed25519
+    - Older FIDO2 keys use P-256; NexusLink supports both curves for identity
+      旧版 FIDO2 密钥使用 P-256；NexusLink 两种曲线都支持作为身份密钥
+    - When P-256 is used, UUID derivation uses the same SHA-256(pubkey) scheme
+      使用 P-256 时，UUID 推导使用相同的 SHA-256(pubkey) 方案
+
+  Trade-off: Highest security, but requires purchasing external hardware.
+             Must have hardware present to sign messages (authentication-per-use).
+             Not suitable for casual users.
+  权衡：最高安全级别，但需要购买外部硬件。
+        每次签名都需要硬件在场（按次认证）。
+        不适合普通用户。
+```
+
+```
+Tier Comparison Summary / 分级对比总结：
+
+  Dimension / 维度         Easy / 便捷    Standard / 标准   Hardware / 硬件
+  ─────────────────────────────────────────────────────────────────────────
+  Setup time / 设置时间     < 10 sec       < 30 sec          1-5 min
+  Key extractable?          By OS admin    Physical attack   Nearly impossible
+  密钥可提取？               OS 管理员可    需物理攻击         几乎不可能
+  Requires purchase?        No             No                Yes ($25-60+)
+  需要购买设备？             否              否                是
+  Mnemonic required?        Optional       Required          Hardware backup
+  助记词是否必须？           可选            必须               硬件备份方式
+  Can upgrade later?        → Standard     → Hardware         -
+  之后可升级？               → 标准          → 硬件            -
+  Suitable for / 适用       Casual chat    Daily driver      High-risk users
+                            随便聊聊       日常使用            高风险用户
+```
+
+Users can upgrade their security tier at any time without changing their UUID. The process re-wraps the existing Ed25519 private key with the new protection method.
+
+用户随时可以升级安全级别而不改变 UUID。升级过程会用新的保护方式重新包装现有的 Ed25519 私钥。
+
+### 2.2 Key Hierarchy / 密钥层级
 
 ```
 Identity Key (IK) — 身份密钥
 │  Curve: Ed25519 (signing) + X25519 (key exchange)
+│  Or P-256 when using Hardware Mode with older FIDO2 keys
 │  Generated once, on the first device
 │  Public key = User UUID (Base58 encoded, ~44 characters)
 │  Example: "nxl:8Wj3KpR2vT5mN7xQ1cY4bF6hA9dL0sE3gU8iO2pJ5"
+│  Protection level depends on user's chosen security tier
+│  保护级别取决于用户选择的安全分级
 │
 ├── Device Signing Key (DSK) — 设备签名密钥
-│   │  One per device, generated in secure hardware
+│   │  One per device
 │   │  Signed by IK to prove it belongs to this identity
-│   │  Platform mapping:
-│   │    iOS     → Secure Enclave (P-256 / Ed25519)
-│   │    Android → StrongBox / TEE (P-256 / Ed25519)
-│   │    macOS   → Secure Enclave (Apple Silicon / T2)
-│   │    Windows → TPM 2.0 (RSA-2048 / P-256)
-│   │    Linux   → TPM 2.0, or software fallback (encrypted keyfile)
+│   │  Storage follows the same tier as IK:
+│   │  存储方式与 IK 相同的分级：
+│   │    Easy     → OS keychain
+│   │    Standard → Best available secure hardware (auto-detected)
+│   │    Hardware → External hardware device
 │   │
 │   └── Ephemeral Prekeys — 临时预密钥
 │       One-time use keys for X3DH key agreement
@@ -97,9 +273,11 @@ Identity Key (IK) — 身份密钥
     Derived from mnemonic phrase (BIP-39 compatible)
     Used to reconstruct IK when all devices are lost
     NEVER stored on any server
+    In Easy Mode: setup can be deferred (with warning)
+    便捷模式下：可以延迟设置（带有警告提示）
 ```
 
-### 2.2 First Launch Flow / 首次启动流程
+### 2.3 First Launch Flow / 首次启动流程
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -109,10 +287,40 @@ Identity Key (IK) — 身份密钥
                         │
                         ▼
             ┌───────────────────────┐
-            │  Generate IK in       │
-            │  secure hardware      │
-            │  在安全硬件中生成 IK    │
+            │  "Welcome to NexusLink│
+            │   Choose your         │
+            │   security level"     │
+            │                       │
+            │  "欢迎来到 NexusLink   │
+            │   选择你的安全级别"     │
+            │                       │
+            │  [Easy]  便捷          │
+            │  Just start chatting   │
+            │  直接开始聊天           │
+            │                       │
+            │  [Standard] 标准(推荐) │
+            │  Hardware-backed keys  │
+            │  硬件保护密钥           │
+            │                       │
+            │  [Hardware] 硬件       │
+            │  External security key │
+            │  外部安全密钥           │
+            │                       │
+            │  (What's this? 了解更多)│
             └───────────┬───────────┘
+                        │
+          ┌─────────────┼──────────────┐
+          ▼             ▼              ▼
+     Easy Mode    Standard Mode   Hardware Mode
+          │             │              │
+          ▼             ▼              ▼
+     Generate IK   Generate DWK    Connect hardware
+     in software   in secure HW    device, generate
+                   wrap IK          IK on device
+     软件生成 IK    安全硬件生成     连接硬件设备
+                   DWK 包装 IK      在设备上生成 IK
+          │             │              │
+          └─────────────┼──────────────┘
                         │
                         ▼
             ┌───────────────────────┐
@@ -130,19 +338,20 @@ Identity Key (IK) — 身份密钥
                         │
                         ▼
             ┌───────────────────────┐
-            │  Display mnemonic     │
-            │  recovery phrase      │
-            │  (user MUST write     │
-            │   down securely)      │
-            │  显示助记词恢复短语     │
-            │  （用户必须安全抄写）   │
-            └───────────┬───────────┘
-                        │
-                        ▼
-            ┌───────────────────────┐
-            │  Verify: user re-     │
-            │  enters phrase        │
-            │  验证：用户重新输入     │
+            │  Mnemonic phrase      │
+            │  助记词恢复短语        │
+            │                       │
+            │  Easy: "Set up later" │
+            │  便捷："以后再设置"     │
+            │  (skip allowed)       │
+            │                       │
+            │  Standard: Required   │
+            │  标准：必须设置         │
+            │  (must write down)    │
+            │                       │
+            │  Hardware: Device-    │
+            │  specific backup      │
+            │  硬件：设备特定备份     │
             └───────────┬───────────┘
                         │
                         ▼
@@ -153,6 +362,12 @@ Identity Key (IK) — 身份密钥
             │  显示连接模式选择       │
             │  （离线，不联网）       │
             └───────────────────────┘
+
+Note: "Easy" users who skip mnemonic will see periodic gentle
+reminders until they set it up. Identity cannot be recovered
+without a mnemonic or hardware backup.
+注意：跳过助记词的"便捷"用户会看到定期温和提醒，
+直到他们设置为止。没有助记词或硬件备份，身份无法恢复。
 ```
 
 ### 2.3 UUID Format / UUID 格式

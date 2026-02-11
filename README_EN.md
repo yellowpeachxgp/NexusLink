@@ -30,15 +30,31 @@ NexusLink is an open-source, cross-platform instant messaging application that u
 
 **NexusLink fills the gap** -- offering the community features of centralized platforms with the privacy and sovereignty of decentralized ones, letting each user decide their own trust level.
 
+### Design Philosophy: Put the Choice in Users' Hands
+
+Every aspect of NexusLink is designed around one principle: **don't decide for the user**.
+
+| Choice | Your Options |
+|--------|-------------|
+| **Who to talk to** | Search users, scan QR codes, meet people in communities |
+| **Where to talk** | Official plaza (Mode A), self-hosted community (Mode B), direct P2P (Mode C) |
+| **Security level** | Easy (software key), Standard (hardware-backed), Hardware (FIDO2 external key) |
+| **Real-name or not** | Only the official server requires KYC; communities and P2P are fully anonymous |
+| **Who owns the data** | Community admins own community data; users own their identity and messages |
+
 ---
 
 ## Key Features
 
 ### Identity Without Registration
-- Cryptographic key pair generated in device secure hardware (TPM / Secure Enclave / StrongBox)
-- Your public key **is** your UUID -- no server involved in identity creation
+- Your cryptographic key pair **is** your identity -- public key = UUID, no server involved
+- **You choose your security level**:
+  - **Easy Mode**: Software key, instant setup, for casual users exploring the app
+  - **Standard Mode** (recommended): Auto-detects and uses device secure hardware (Secure Enclave / StrongBox / TPM)
+  - **Hardware Mode**: Supports FIDO2 security keys (YubiKey, etc.) for high-security needs
+- All three tiers produce the same UUID format, use the same encryption protocol, fully interoperable
 - Multi-device sync via cross-signing protocol
-- Identity migration via mnemonic recovery phrase (12-24 words)
+- Identity migration via mnemonic recovery phrase (can be deferred in Easy Mode)
 
 ### Three Connection Modes
 
@@ -940,7 +956,7 @@ What NexusLink learned from Matrix:
 | Speed | Slow (high onion routing latency) | Mode A/B: fast (direct server); Mode C: moderate |
 | Community features | Limited | Full community features (planned) |
 | Groups | Max ~100, basic | Designed for large-scale communities |
-| Identity security | Software key | **Hardware secure element** (higher security tier) |
+| Identity security | Software key | **Tiered (software→HW→FIDO2)** |
 
 **Borrowed**: Session proved that "no registration" identity models are viable.
 **Differentiation**: Session's pure decentralization makes it slow and feature-limited. NexusLink lets users choose community mode when speed and features matter.
@@ -970,7 +986,7 @@ What NexusLink learned from Matrix:
 | Metadata isolation | **Architectural** | No | Partial | No | No | Yes | No |
 | Community features | Planned | Mature | Basic | Mature | **Richest** | Limited | Fragmented |
 | Trust levels | **3 levels** | 1 level | 1 level | 1 level | 1 level | 1 level | 1 level |
-| Identity security | **HW secure element** | Password | PIN | Phone number | Password | Software key | Password |
+| Identity security | **Tiered (software/HW/FIDO2)** | Password | PIN | Phone number | Password | Software key | Password |
 | Protocol maturity | New (in dev) | Mature (10y) | Mature (10y) | Mature | Mature | Moderate (5y) | Mature (26y) |
 
 ### What NexusLink Borrows from Each Project
