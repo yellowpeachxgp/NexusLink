@@ -725,19 +725,285 @@ See [ROADMAP.md](./ROADMAP.md) for the full development plan.
 
 ---
 
-## Comparison with Existing Solutions
+## Product Positioning & Competitive Analysis
 
-| Feature | NexusLink | Matrix | Telegram | Signal | Session |
-|---------|-----------|--------|----------|--------|---------|
-| No registration required | Yes (HW key) | No | No (phone) | No (phone) | Yes (key) |
-| E2E encryption default | Yes | Optional | No | Yes | Yes |
-| Self-hosted community | Yes | Yes (federation) | No | No | No |
-| P2P direct mode | Yes | Planned | No | No | Yes (onion) |
-| Official directory | Yes | matrix.org | Telegram Inc. | N/A | N/A |
-| Privacy isolation | Yes (by design) | No (metadata leaks) | No | N/A | Partial |
-| Real-name gate (optional) | Yes (for official) | No | No | No | No |
-| Multi-device sync | Yes | Yes | Yes | Yes | Yes |
-| Identity recovery | Mnemonic phrase | Password | Phone/cloud | Phone/PIN | Mnemonic |
+### Product Positioning
+
+NexusLink's core philosophy is **user choice**: instead of deciding the balance between privacy and convenience for users, let them decide for themselves.
+
+```
+Market Positioning Matrix:
+
+                  High Privacy
+                       │
+          Session      │   NexusLink (Mode C / P2P)
+            Briar      │   NexusLink (Mode B / Community)
+                       │
+  Decentralized ───────┼────────── Centralized
+                       │
+           XMPP        │   NexusLink (Mode A / Official)
+                       │   Signal
+                       │   Telegram    Discord
+                  Low Privacy
+
+NexusLink is not a single point on this grid -- it's a sliding scale.
+Users choose their own position within one app.
+```
+
+**One-line positioning**: NexusLink gives users the *choice* of their privacy level -- with Signal's encryption strength, Matrix's self-hosting capability, and Discord's community experience, without forcing you to pick just one.
+
+### Deep Dive: NexusLink vs Matrix
+
+Matrix is the closest existing project to NexusLink's vision. Both support self-hosting and pursue openness and decentralization. But they differ fundamentally at the architectural level:
+
+#### Design Philosophy
+
+| Dimension | Matrix | NexusLink |
+|-----------|--------|-----------|
+| Core idea | Open federation -- any server can talk to any server | Hierarchical isolation -- servers don't communicate directly; discovery via directory |
+| Data model | DAG (Directed Acyclic Graph) -- room state fully replicated across all participating servers | Message routing -- messages only exist on the sender's server, never replicated across servers |
+| Design goal | Become the "Email of messaging" (open interconnection) | Become the "VPN + address book of messaging" (privacy isolation + discoverability) |
+
+#### Identity Model
+
+```
+Matrix Identity:
+  @alice:matrix.org
+  ├── Bound to a specific server (matrix.org)
+  ├── Requires account registration (username + password)
+  ├── Migrating servers = changing identity (must rebuild all trust)
+  └── Server admin can reset password = server controls identity
+
+NexusLink Identity:
+  nxl:8Wj3kR9... (Ed25519 public key hash)
+  ├── Generated locally in device secure hardware
+  ├── Zero registration -- no server dependency
+  ├── Freely portable across any server, identity unchanged
+  └── Mnemonic recovery -- only the user can restore identity
+```
+
+This means:
+- If a Matrix homeserver shuts down, your identity disappears; you must rebuild all contacts
+- NexusLink identities belong to users permanently; if a server shuts down, just join another community
+
+#### Federation vs Hierarchical Isolation
+
+This is the most critical difference.
+
+```
+Matrix Federation Model:
+
+  User A on Server 1 sends message to Room X
+  Room X has members from Server 1, 2, 3
+
+  Server 1 ───── full room state ─────→ Server 2
+      │                                     │
+      └───── full room state ─────→ Server 3
+
+  Result:
+  - 3 servers each hold a full copy of Room X
+  - Any server admin can see the complete member list
+  - Message timestamps, membership changes, presence -- all visible
+  - This is Matrix's known "metadata leakage" problem
+
+NexusLink Hierarchical Model:
+
+  Directory Server (official)
+  │
+  ├── Stores ONLY: community name, description, endpoint URL
+  │   Does NOT store: member lists, messages, presence
+  │
+  └── Community A Server        Community B Server
+      ├── Member data stays here  ├── Completely independent
+      ├── Messages stay here      ├── Cannot see any of Community A's data
+      └── Never reported upstream └── Even if the same user is in both
+
+  Result:
+  - Directory server is just a "phone book" -- not involved in messaging
+  - Community servers are fully isolated, no state replication
+  - The official org cannot know anything about your activity in community servers
+  - Switching communities = entering an independent world; privacy isolated by design
+```
+
+#### Metadata Privacy
+
+This is the core concern of Matrix users and privacy researchers.
+
+| Metadata Type | Matrix Server Visibility | NexusLink Community Server | NexusLink Directory Server |
+|--------------|-------------------------|---------------------------|---------------------------|
+| Message content | Not visible (if E2E enabled) | Not visible (E2E mandatory) | Not visible |
+| Who talks to whom | **All participating homeservers** | Only that community server | **Not visible** |
+| Communication timing | **All participating homeservers** | Only that community server | **Not visible** |
+| Presence/online status | **All participating homeservers** | Only that community server | **Not visible** |
+| Group member lists | **All participating homeservers** | Only that community server | **Not visible** |
+| User IP address | User's homeserver | Only that community server | Only when accessing directory |
+
+**Key difference**: In Matrix, a room spanning N servers exposes metadata to N administrators. In NexusLink, no matter how many communities a user joins, each community's metadata is only visible to that community's admin and never aggregated.
+
+#### Encryption Strategy
+
+| Dimension | Matrix | NexusLink |
+|-----------|--------|-----------|
+| 1:1 encryption | Olm (Double Ratchet variant), optional | Signal Protocol (X3DH + Double Ratchet), **mandatory** |
+| Group encryption | Megolm (Sender Key variant), optional | Sender Keys + Signal, **mandatory** |
+| Default state | New rooms default to encrypted (post-2023), but old/public rooms often unencrypted | **No unencrypted option** -- all messages are E2E encrypted |
+| Key verification | Cross-signing + emoji verification | Cross-signing + QR code / safety numbers |
+| Key backup | Server-side encrypted backup (SSSS) | Client-side mnemonic, no server dependency |
+
+#### P2P Capability
+
+| Dimension | Matrix | NexusLink |
+|-----------|--------|-----------|
+| Status | Experimental (Pinecone project) | First-class citizen (Mode C) |
+| Implementation | Custom Pinecone overlay network | libp2p + WebRTC (mature industrial stack) |
+| LAN discovery | Research stage | mDNS auto-discovery (no server needed) |
+| NAT traversal | Unresolved | STUN/ICE + TURN fallback |
+| Production ready | No | Designed to be usable from Phase 2 |
+| Offline messaging | Not supported | Supported on LAN (via mDNS) |
+
+#### Server Resources
+
+| Scale | Matrix (Synapse) | Matrix (Conduit) | NexusLink |
+|-------|-----------------|------------------|-----------|
+| Small (< 500 users) | 2-4 GB RAM, 2 cores | 512 MB RAM, 1 core | 2 GB RAM, 2 cores (incl. DB) |
+| Medium (~5000 users) | 8-16 GB RAM, 4 cores | 2-4 GB RAM, 2 cores | 8 GB RAM, 4 cores (incl. DB) |
+| Startup time | Synapse: Python, slow | Conduit: Rust, fast | Rust (Axum), fast |
+| Maintenance | High (state resolution, federation sync, media store) | Moderate | Low (no federation sync, no DAG) |
+
+**Why NexusLink is lighter**: No DAG state resolution, no cross-server state sync, no federation queries. Each community server handles only its own members and messages.
+
+#### Where Matrix Still Leads (honest assessment)
+
+Matrix remains ahead in these areas:
+
+- **Maturity**: Matrix development started in 2014 (10+ years); NexusLink is just beginning
+- **Ecosystem**: Matrix has Element, FluffyChat, SchildiChat, and many bridges (Telegram, Discord, IRC, Slack)
+- **Specification completeness**: Matrix Spec is a formal document refined over years
+- **Open federation flexibility**: Matrix enables cross-organization collaboration; NexusLink's isolation model requires P2P or shared communities for cross-community messaging
+- **Government/enterprise adoption**: French government (Tchap), German military (BwMessenger), and others have deployed Matrix
+
+What NexusLink learned from Matrix:
+- Cross-signing approach for multi-device verification
+- E2E encryption practices for group scenarios
+- Federation metadata leakage lessons (the direct reason NexusLink chose hierarchical isolation)
+- Importance of community governance and open specifications
+
+### Comparison with Other Solutions
+
+#### NexusLink vs Signal
+
+| Dimension | Signal | NexusLink |
+|-----------|--------|-----------|
+| Architecture | Purely centralized (Signal servers) | Hybrid (three modes) |
+| Registration | Phone number required | Zero registration |
+| Self-hosting | Impossible (code is open but server doesn't support federation) | Core feature |
+| Communities | Basic groups (max 1000) | Full community features (channels, permissions, roles) |
+| Encryption protocol | Signal Protocol | Signal Protocol (same) |
+| Anonymity | Low (phone number required) | High (zero registration, P2P mode) |
+
+**Borrowed**: NexusLink directly adopts Signal Protocol as its encryption foundation -- the most widely audited E2E protocol available.
+**Differentiation**: NexusLink provides self-hosting and community features that Signal cannot offer.
+
+#### NexusLink vs Telegram
+
+| Dimension | Telegram | NexusLink |
+|-----------|----------|-----------|
+| Encryption | E2E only in "secret chats" (MTProto); regular chats visible to server | **All messages E2E mandatory** |
+| Server | Closed-source, fully controlled by Telegram Inc. | Fully open-source (AGPLv3), self-hostable |
+| Group features | Very mature (channels, supergroups, bots) | Planned (channels, permissions, RBAC) |
+| Privacy | Server holds plaintext for most messages | Server can **never** see message plaintext |
+| Registration | Phone number required | Zero registration |
+
+**Borrowed**: Telegram's channel/supergroup/bot ecosystem is a key reference for community features.
+**Differentiation**: Telegram's fundamental issue is that encryption is not default; most users' messages are visible to the server. NexusLink has no unencrypted option.
+
+#### NexusLink vs Discord
+
+| Dimension | Discord | NexusLink |
+|-----------|---------|-----------|
+| Encryption | **No E2E encryption** | Mandatory E2E |
+| Open source | No (commercial, closed) | Yes (AGPLv3) |
+| Self-hosting | Impossible | Core feature |
+| Community features | Extremely rich (channels, voice, threads, roles, bots) | Planned, incremental rollout |
+| Business model | Nitro subscription, server boosts | Open-source free, optional managed hosting |
+| Privacy | Low (all data visible to Discord, subject to subpoena) | High (E2E + community sovereignty) |
+
+**Borrowed**: Discord's community experience (channel categories, roles, permissions, voice channels) is the UX benchmark for NexusLink communities.
+**Differentiation**: Discord has zero E2E encryption; all messages are fully visible to Discord Inc. NexusLink community admins cannot see message content either.
+
+#### NexusLink vs Session
+
+| Dimension | Session | NexusLink |
+|-----------|---------|-----------|
+| Architecture | Purely decentralized (Oxen network / onion routing) | Hybrid (centralized + decentralized + P2P) |
+| Registration | None (key generation) | None (secure hardware key) |
+| Speed | Slow (high onion routing latency) | Mode A/B: fast (direct server); Mode C: moderate |
+| Community features | Limited | Full community features (planned) |
+| Groups | Max ~100, basic | Designed for large-scale communities |
+| Identity security | Software key | **Hardware secure element** (higher security tier) |
+
+**Borrowed**: Session proved that "no registration" identity models are viable.
+**Differentiation**: Session's pure decentralization makes it slow and feature-limited. NexusLink lets users choose community mode when speed and features matter.
+
+#### NexusLink vs XMPP (Jabber)
+
+| Dimension | XMPP | NexusLink |
+|-----------|------|-----------|
+| Protocol age | 1999 (26 years) | 2025 (brand new) |
+| Federation | Yes (open federation, similar to Matrix) | Hierarchical isolation (not federated) |
+| Encryption | OMEMO (optional, XEP-0384) | Signal Protocol (mandatory) |
+| Client consistency | Poor (different clients, different features) | Unified (official client, Flutter cross-platform) |
+| Modern features | Depends on XEP extensions, inconsistent | Natively integrated (voice, files, push) |
+
+**Borrowed**: XMPP proves open protocols can have longevity, but also exposes fragmentation risks.
+**Differentiation**: NexusLink learned from XMPP's fragmentation -- provide a unified official client and clear protocol spec, avoiding "protocol supports it but no client implements it."
+
+### Comparison Overview Table
+
+| Feature | NexusLink | Matrix | Signal | Telegram | Discord | Session | XMPP |
+|---------|-----------|--------|--------|----------|---------|---------|------|
+| Open source | Full (AGPLv3) | Full (Apache) | Client+Server | Client only | No | Full (GPL) | Open protocol |
+| No registration | **Yes** | No | No | No | No | **Yes** | No |
+| Default E2E | **Mandatory** | Optional | **Mandatory** | No | No | **Mandatory** | Optional |
+| Self-hosted server | **Yes** | Yes | No | No | No | No | Yes |
+| P2P direct | **Mode C** | Experimental | No | No | No | Onion routing | No |
+| Metadata isolation | **Architectural** | No | Partial | No | No | Yes | No |
+| Community features | Planned | Mature | Basic | Mature | **Richest** | Limited | Fragmented |
+| Trust levels | **3 levels** | 1 level | 1 level | 1 level | 1 level | 1 level | 1 level |
+| Identity security | **HW secure element** | Password | PIN | Phone number | Password | Software key | Password |
+| Protocol maturity | New (in dev) | Mature (10y) | Mature (10y) | Mature | Mature | Moderate (5y) | Mature (26y) |
+
+### What NexusLink Borrows from Each Project
+
+```
+Reference Map:
+
+  Signal Protocol ──────────→ Encryption (X3DH + Double Ratchet)
+                               Adopted directly; not reinvented
+
+  Matrix ───────────────────→ Cross-signing multi-device verification
+                               Federation metadata leakage lessons
+                               → direct reason for hierarchical isolation
+                               Community governance and open specs
+
+  Session ──────────────────→ Zero-registration identity model validation
+                               Mnemonic recovery mechanism
+
+  Discord ──────────────────→ Community UX benchmark (channels, roles, permissions, voice)
+                               Server discovery/recommendation
+
+  Telegram ─────────────────→ Channel/supergroup/bot ecosystem reference
+                               Message sync and multi-device experience
+
+  XMPP ─────────────────────→ Long-term viability of open protocols
+                               Fragmentation lessons → unified client
+
+  libp2p ───────────────────→ P2P networking stack (not custom-built)
+                               NAT traversal and peer discovery
+
+  Briar ─────────────────────→ Offline P2P messaging scenarios
+                               Tor integration possibilities
+```
 
 ---
 
@@ -789,13 +1055,17 @@ This means:
 
 ## Acknowledgments
 
-NexusLink builds upon the research and work of many open-source projects and protocols:
+NexusLink builds upon the research and work of many open-source projects and protocols. We respect each referenced project and have clearly documented what NexusLink learned from them and where it diverges:
 
-- [Signal Protocol](https://signal.org/docs/) -- Double Ratchet and X3DH key agreement
-- [Matrix](https://matrix.org/) -- Federated messaging and cross-signing concepts
+- [Signal Protocol](https://signal.org/docs/) -- NexusLink's encryption foundation (X3DH + Double Ratchet), adopted directly rather than reinvented
+- [Matrix](https://matrix.org/) -- Pioneer of federated messaging; NexusLink drew inspiration from Matrix's cross-signing for multi-device verification and learned from its metadata leakage problems to design hierarchical isolation
+- [Session](https://getsession.org/) -- Validated the viability of zero-registration identity models; NexusLink adopted a similar mnemonic recovery mechanism
+- [Discord](https://discord.com/) -- UX benchmark for community features (channels, roles, permissions); NexusLink's community features reference Discord's experience
+- [Telegram](https://telegram.org/) -- Reference for channel, supergroup, and bot ecosystems
+- [XMPP](https://xmpp.org/) -- Proof that open protocols have long-term viability, and also a cautionary tale about fragmentation
 - [libp2p](https://libp2p.io/) -- Peer-to-peer networking stack
+- [Briar](https://briarproject.org/) -- Reference for offline P2P messaging scenarios
 - [nmshd/rust-crypto](https://github.com/nmshd/rust-crypto) -- Cross-platform secure hardware abstraction
-- [Session](https://getsession.org/) -- Decentralized identity without registration
 - [Axum](https://github.com/tokio-rs/axum) -- Ergonomic and modular web framework for Rust
 - [tokio](https://tokio.rs/) -- Asynchronous runtime for Rust
 
