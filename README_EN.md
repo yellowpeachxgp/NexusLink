@@ -1,0 +1,806 @@
+<p align="center">
+  <h1 align="center">NexusLink</h1>
+  <p align="center">
+    <strong>Hybrid Messaging Platform -- Where Centralized Meets Decentralized</strong>
+  </p>
+  <p align="center">
+    <a href="./README.md">中文文档</a> |
+    <a href="./docs/en/architecture.md">Architecture</a> |
+    <a href="./ROADMAP.md">Roadmap</a> |
+    <a href="./CONTRIBUTING.md">Contributing</a>
+  </p>
+</p>
+
+---
+
+## What is NexusLink?
+
+NexusLink is an open-source, cross-platform instant messaging application that uniquely **bridges centralized and decentralized communication** within a single app. Users choose how they connect -- through an official directory server, a self-hosted community server, or direct peer-to-peer -- without sacrificing usability or security.
+
+**No phone number. No email. No registration.** Your identity is a cryptographic key pair generated on your device's secure hardware. You own your identity.
+
+### The Problem
+
+| Centralized Apps (WeChat, Telegram, Discord) | Decentralized Apps (Signal, Briar, Session) |
+|---|---|
+| Easy to use, feature-rich | Privacy-first, censorship-resistant |
+| You surrender data sovereignty | Limited social/community features |
+| Single point of failure and surveillance | Fragmented user experience |
+| No choice in who hosts your data | Technical barrier for average users |
+
+**NexusLink fills the gap** -- offering the community features of centralized platforms with the privacy and sovereignty of decentralized ones, letting each user decide their own trust level.
+
+---
+
+## Key Features
+
+### Identity Without Registration
+- Cryptographic key pair generated in device secure hardware (TPM / Secure Enclave / StrongBox)
+- Your public key **is** your UUID -- no server involved in identity creation
+- Multi-device sync via cross-signing protocol
+- Identity migration via mnemonic recovery phrase (12-24 words)
+
+### Three Connection Modes
+
+```
++-------------------------------------------------------------+
+|                    NexusLink Client                          |
+|                                                              |
+|  [A] Official Server     [B] Community Server    [C] P2P    |
+|  - Real-name verified    - Self-hosted            - Direct   |
+|  - Browse communities    - Data sovereignty       - No server|
+|  - Regulated channels    - Custom rules           - E2E only |
++-------------------------------------------------------------+
+```
+
+**Mode A: Official Directory Server**
+- Real-name (KYC) verified UUID required
+- Browse and join registered communities
+- Access official public channels
+- Anti-abuse protections
+
+**Mode B: Community Self-Hosted Server**
+- Anyone can deploy with the same server codebase
+- Optionally register in the official directory for discoverability
+- Full data sovereignty -- the official server never sees your messages, members, or metadata
+- Community-defined moderation rules
+
+**Mode C: Peer-to-Peer**
+- Direct device-to-device communication via libp2p + WebRTC
+- Exchange public keys via QR code or out-of-band
+- Zero server dependency (STUN for NAT traversal only)
+- Maximum privacy for sensitive conversations
+
+### Privacy by Architecture
+- End-to-end encryption (Double Ratchet protocol) for all messages
+- Official directory server is a **phonebook only** -- stores community listings, not messages or membership
+- Community servers are **privacy shields** -- metadata never flows to the official server
+- Zero-knowledge proof ready for future KYC (prove identity without revealing details)
+
+### Cross-Platform
+- iOS, Android, Windows, macOS, Linux
+- Flutter UI + Rust core via FFI
+- Consistent experience across all platforms
+
+---
+
+## Architecture Overview
+
+```
++--------------------------------------------------------------+
+|                         Client                                |
+|  +--------------------+  +----------------------------------+ |
+|  |   Flutter UI Layer |  |        Rust Core Library         | |
+|  |                    |<-|  - Identity (Secure HW)          | |
+|  |  - Chat screens    |  |  - E2E Encryption                | |
+|  |  - Community view  |  |  - P2P Network (libp2p)          | |
+|  |  - Settings        |  |  - Protocol codec                | |
+|  |  - Multi-language  |  |  - Local encrypted storage       | |
+|  +--------------------+  +----------------------------------+ |
++------------------+-------------------+-----------------------+
+                   |                   |
+         +---------+                   +----------+
+         v                                        v
++---------------------+               +-----------------------+
+|  Directory Server   |               |  Community Server     |
+|  (Official)         |               |  (Self-hosted)        |
+|                     |               |                       |
+|  - Community index  |   register    |  - Chat hosting       |
+|  - KYC service      |<-------------|  - Member management  |
+|  - Abuse reporting  |   (metadata   |  - File storage       |
+|                     |    only)      |  - Custom moderation  |
++---------------------+               +-----------------------+
+                                               |
+                                      P2P direct connection
+                                               |
+                                      +--------v----------+
+                                      |   Another Client   |
+                                      +-------------------+
+```
+
+For detailed architecture documentation, see [ARCHITECTURE.md](./docs/en/architecture.md).
+
+---
+
+## Server Development
+
+This section provides a comprehensive guide for developers who want to understand, extend, or deploy the NexusLink server components.
+
+### Server Architecture Overview
+
+NexusLink uses a **shared codebase** model for its server infrastructure. Both the **Community Server** and the **Directory Server** are built from the same Rust workspace under `server/`, sharing common libraries for configuration, error handling, type definitions, and utilities via the `server/shared/` crate. This design ensures consistency across server types and reduces code duplication.
+
+```
+server/
++-- shared/            Shared crate (config, error types, utilities)
++-- community/         Community Server binary and modules
++-- directory/         Directory Server binary and modules
+```
+
+The two servers serve fundamentally different roles and are deployed independently, but any infrastructure code (database abstractions, middleware, serialization helpers) is written once in `shared/` and consumed by both.
+
+### Community Server
+
+The Community Server is the primary workhorse of the NexusLink ecosystem. It is designed to be **self-hosted by anyone** -- an individual, an organization, or a community operator. Each Community Server instance operates autonomously, storing its own data and enforcing its own policies.
+
+#### Responsibilities
+
+- Host real-time messaging for all channels and groups within the community
+- Manage member registration, roles, permissions, and moderation actions
+- Store and serve uploaded files (images, documents, media)
+- Maintain prekey bundles for offline message delivery (X3DH protocol)
+- Deliver push notifications to offline clients
+- Optionally register with the official Directory Server for discoverability
+
+#### Core Modules
+
+| Module | Description |
+|--------|-------------|
+| **WebSocket Real-Time Messaging** | Persistent WebSocket connections for bidirectional message delivery. Supports connection multiplexing, automatic reconnection signaling, and per-channel message routing. |
+| **Message Queue** | Internal message queue for reliable delivery. Handles offline message buffering, delivery acknowledgments, and retry logic. Messages are queued per-recipient and flushed upon reconnection. |
+| **Prekey Management** | Stores X3DH prekey bundles uploaded by clients. Serves one-time prekeys to initiators of new conversations and manages prekey rotation and replenishment signals. |
+| **Channel and Group Management** | Full lifecycle management for channels (public, private, announcement) and groups. Includes creation, archival, topic management, pinned messages, and permission inheritance. |
+| **File Storage** | Handles file upload, storage, and retrieval. Supports configurable storage backends (local filesystem, S3-compatible object storage). Files are referenced by content hash for deduplication. |
+| **Push Notifications** | Integrates with platform push services (APNs, FCM) to notify offline clients of new messages. Push payloads contain only opaque notification identifiers -- no message content. |
+| **Member Management and Moderation** | Role-based access control (owner, admin, moderator, member, guest). Supports bans, mutes, invite-only channels, and customizable moderation policies per community. |
+| **Rate Limiting** | Per-client and per-endpoint rate limiting using the token bucket algorithm. Configurable thresholds to prevent abuse without impacting normal usage. Implemented via tower middleware. |
+| **Health Checks** | Liveness and readiness probe endpoints for container orchestration platforms. Reports database connectivity, WebSocket listener status, and background task health. |
+
+#### API Overview
+
+The Community Server exposes two transport interfaces:
+
+**REST API (HTTPS)**
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/v1/auth/register` | Register a new member (public key + signed challenge) |
+| POST | `/api/v1/auth/challenge` | Request an authentication challenge |
+| GET | `/api/v1/channels` | List available channels |
+| POST | `/api/v1/channels` | Create a new channel (admin+) |
+| GET | `/api/v1/channels/{id}/messages` | Fetch message history (paginated) |
+| POST | `/api/v1/messages` | Send a message (REST fallback) |
+| POST | `/api/v1/files/upload` | Upload a file |
+| GET | `/api/v1/files/{hash}` | Download a file by content hash |
+| GET | `/api/v1/members` | List community members |
+| PUT | `/api/v1/members/{id}/role` | Update a member's role (admin+) |
+| POST | `/api/v1/prekeys` | Upload prekey bundle |
+| GET | `/api/v1/prekeys/{user_id}` | Fetch a prekey bundle for a user |
+| GET | `/health/live` | Liveness probe |
+| GET | `/health/ready` | Readiness probe |
+
+**WebSocket API (WSS)**
+
+| Event | Direction | Description |
+|-------|-----------|-------------|
+| `message.new` | Server -> Client | New message in a subscribed channel |
+| `message.send` | Client -> Server | Send a message to a channel |
+| `message.ack` | Server -> Client | Delivery acknowledgment |
+| `typing.start` | Bidirectional | Typing indicator start |
+| `typing.stop` | Bidirectional | Typing indicator stop |
+| `presence.update` | Server -> Client | Member online/offline status change |
+| `channel.update` | Server -> Client | Channel metadata changed |
+
+#### Database Design
+
+The Community Server uses PostgreSQL as its primary datastore. Key tables include:
+
+```
+members
+  - id (UUID, primary key)
+  - public_key (BYTEA, unique)
+  - display_name (TEXT)
+  - role (ENUM: owner, admin, moderator, member, guest)
+  - joined_at (TIMESTAMPTZ)
+  - banned (BOOLEAN)
+
+channels
+  - id (UUID, primary key)
+  - name (TEXT)
+  - channel_type (ENUM: public, private, announcement)
+  - created_by (UUID, FK -> members)
+  - created_at (TIMESTAMPTZ)
+  - archived (BOOLEAN)
+
+messages
+  - id (UUID, primary key)
+  - channel_id (UUID, FK -> channels)
+  - sender_id (UUID, FK -> members)
+  - ciphertext (BYTEA)        -- E2E encrypted payload
+  - timestamp (TIMESTAMPTZ)
+  - message_type (ENUM: text, file, system)
+
+prekeys
+  - id (BIGSERIAL, primary key)
+  - user_id (UUID, FK -> members)
+  - prekey_id (INTEGER)
+  - public_key (BYTEA)
+  - is_one_time (BOOLEAN)
+  - uploaded_at (TIMESTAMPTZ)
+
+files
+  - content_hash (TEXT, primary key)
+  - uploader_id (UUID, FK -> members)
+  - file_size (BIGINT)
+  - mime_type (TEXT)
+  - storage_path (TEXT)
+  - uploaded_at (TIMESTAMPTZ)
+```
+
+All message content stored in the `messages` table is the E2E-encrypted ciphertext. The Community Server never possesses the plaintext or the decryption keys.
+
+### Directory Server
+
+The Directory Server is the **official, centrally operated** component of the NexusLink network. Its scope is deliberately minimal: it functions as a **phonebook** for discovering communities, not as a message relay or storage backend.
+
+#### Responsibilities
+
+- Maintain a searchable index of registered communities (name, description, endpoint URL, public key)
+- Provide KYC (Know Your Customer) identity verification for users who wish to participate in the official directory ecosystem
+- Accept and process community registration applications
+- Handle abuse reports and enforce network-wide policies
+- Serve as a trust anchor for community server identity verification
+
+#### API Overview
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/v1/communities` | Search and browse registered communities |
+| GET | `/api/v1/communities/{id}` | Get community details |
+| POST | `/api/v1/communities/register` | Register a new community (server operator) |
+| PUT | `/api/v1/communities/{id}` | Update community listing (verified operator) |
+| DELETE | `/api/v1/communities/{id}` | Delist a community |
+| POST | `/api/v1/kyc/initiate` | Start KYC verification flow |
+| POST | `/api/v1/kyc/verify` | Submit KYC verification documents |
+| GET | `/api/v1/kyc/status` | Check KYC verification status |
+| POST | `/api/v1/reports` | Submit an abuse report |
+| GET | `/health/live` | Liveness probe |
+| GET | `/health/ready` | Readiness probe |
+
+#### KYC Flow
+
+```
+Client                      Directory Server              KYC Provider
+  |                                |                           |
+  |  POST /kyc/initiate           |                           |
+  |------------------------------->|                           |
+  |  { challenge, session_id }    |                           |
+  |<-------------------------------|                           |
+  |                                |                           |
+  |  POST /kyc/verify             |                           |
+  |  { signed_challenge, docs }   |                           |
+  |------------------------------->|                           |
+  |                                |  verify documents         |
+  |                                |-------------------------->|
+  |                                |  verification result      |
+  |                                |<--------------------------|
+  |                                |                           |
+  |  { status: verified/rejected } |                           |
+  |<-------------------------------|                           |
+```
+
+KYC verification binds a real-world identity to a UUID. The binding is stored as a one-way hash -- the Directory Server can confirm that a UUID has been verified without storing the original identity documents. This supports future zero-knowledge proof integration.
+
+#### Community Registration Flow
+
+```
+Community Server              Directory Server
+  |                                |
+  |  POST /communities/register   |
+  |  { name, desc, endpoint,      |
+  |    server_public_key,          |
+  |    operator_uuid (KYC'd) }    |
+  |------------------------------->|
+  |                                |  verify operator KYC status
+  |                                |  verify server reachability
+  |                                |  verify TLS certificate
+  |                                |
+  |  { community_id, status }     |
+  |<-------------------------------|
+```
+
+Requirements for registration:
+- The operator must have a KYC-verified UUID
+- The community server must be reachable at the declared endpoint
+- The community server must present a valid TLS certificate
+- The server's public key must match the one submitted during registration
+
+#### Anti-Abuse Mechanisms
+
+- **Rate limiting**: All Directory Server endpoints enforce strict rate limits per UUID and per IP address
+- **Reputation scoring**: Communities receive reputation scores based on report volume and verified activity
+- **Automated delisting**: Communities with sustained high abuse-report ratios are automatically delisted pending review
+- **Proof-of-work challenges**: Optional computational challenges for registration to deter automated spam
+- **IP-based throttling**: Progressive backoff for repeated failed requests from the same origin
+
+### Deployment
+
+#### Docker One-Click Deploy
+
+The recommended deployment method for production environments:
+
+```bash
+# Community Server
+docker pull nexuslink/community-server:latest
+docker run -d \
+  --name nexuslink-community \
+  -p 443:443 \
+  -p 8443:8443 \
+  -v /path/to/data:/data \
+  -v /path/to/config.toml:/etc/nexuslink/config.toml \
+  -e NEXUSLINK_DOMAIN=your.community.domain.com \
+  -e DATABASE_URL=postgres://user:pass@db:5432/nexuslink \
+  nexuslink/community-server:latest
+
+# Directory Server (official deployment only)
+docker pull nexuslink/directory-server:latest
+docker run -d \
+  --name nexuslink-directory \
+  -p 443:443 \
+  -v /path/to/data:/data \
+  -v /path/to/config.toml:/etc/nexuslink/config.toml \
+  -e DATABASE_URL=postgres://user:pass@db:5432/nexuslink_dir \
+  nexuslink/directory-server:latest
+```
+
+A `docker-compose.yml` is provided for deploying a Community Server alongside PostgreSQL and Redis:
+
+```bash
+cd server/community
+docker compose up -d
+```
+
+#### Build from Source
+
+```bash
+# Clone the repository
+git clone https://github.com/yellowpeachxgp/NexusLink.git
+cd NexusLink
+
+# Build Community Server
+cargo build --release -p nexuslink-community-server
+
+# Build Directory Server
+cargo build --release -p nexuslink-directory-server
+
+# Run with a configuration file
+./target/release/nexuslink-community-server --config config.toml
+```
+
+#### Configuration
+
+Server configuration is managed via TOML files. Example `config.toml` for the Community Server:
+
+```toml
+[server]
+bind_address = "0.0.0.0"
+https_port = 443
+ws_port = 8443
+domain = "your.community.domain.com"
+
+[database]
+url = "postgres://user:password@localhost:5432/nexuslink"
+max_connections = 50
+min_connections = 5
+
+[redis]
+url = "redis://localhost:6379"    # Optional: enables caching and pub/sub
+enabled = false
+
+[storage]
+backend = "local"                 # "local" or "s3"
+local_path = "/data/files"
+max_file_size = "50MB"
+
+[tls]
+cert_path = "/etc/nexuslink/cert.pem"
+key_path = "/etc/nexuslink/key.pem"
+
+[rate_limit]
+requests_per_second = 100
+burst_size = 200
+
+[push]
+apns_key_path = "/etc/nexuslink/apns.p8"
+fcm_credentials_path = "/etc/nexuslink/fcm.json"
+
+[directory]
+enabled = false                   # Set to true to register with the Directory Server
+directory_url = "https://directory.nexuslink.org"
+server_public_key_path = "/etc/nexuslink/server_key.pub"
+```
+
+Environment variables override TOML values. All configuration keys map to environment variables with the `NEXUSLINK_` prefix (e.g., `NEXUSLINK_DATABASE_URL`).
+
+### Server Tech Stack
+
+| Component | Technology | Role |
+|-----------|-----------|------|
+| **HTTP Framework** | Axum | Async HTTP/WebSocket server built on hyper and tokio |
+| **Async Runtime** | tokio | Multi-threaded async executor for all I/O operations |
+| **Database Driver** | SQLx | Compile-time checked SQL queries with async PostgreSQL support |
+| **Cache** | Redis (optional) | Session caching, rate limit counters, pub/sub for multi-instance WebSocket fan-out |
+| **Middleware** | tower | Composable middleware stack: rate limiting, logging, authentication, CORS |
+| **WebSocket** | tokio-tungstenite | High-performance async WebSocket implementation |
+| **Serialization** | serde + serde_json | JSON serialization for REST API; Protocol Buffers for wire format |
+| **TLS** | rustls | Pure-Rust TLS implementation for secure connections |
+| **Logging** | tracing + tracing-subscriber | Structured, async-aware logging with span context |
+| **Metrics** | prometheus-client | Prometheus-compatible metrics exposition |
+| **Configuration** | config-rs | Layered configuration from files, environment variables, and defaults |
+| **Migration** | SQLx migrations | Version-controlled database schema migrations |
+
+### Server Monitoring and Operations
+
+#### Health Check Endpoints
+
+Both servers expose standardized health check endpoints compatible with Kubernetes and other orchestration platforms:
+
+- `GET /health/live` -- Returns `200 OK` if the process is running. Used for liveness probes.
+- `GET /health/ready` -- Returns `200 OK` only when the server is fully operational (database connected, background tasks running, WebSocket listener active). Used for readiness probes.
+
+Response body example:
+
+```json
+{
+  "status": "healthy",
+  "version": "0.1.0",
+  "uptime_seconds": 86400,
+  "checks": {
+    "database": "connected",
+    "websocket_listener": "active",
+    "background_tasks": "running",
+    "redis": "connected"
+  }
+}
+```
+
+#### Prometheus Metrics
+
+The server exposes a `/metrics` endpoint in Prometheus exposition format. Key metrics include:
+
+| Metric | Type | Description |
+|--------|------|-------------|
+| `nexuslink_http_requests_total` | Counter | Total HTTP requests by method, path, and status code |
+| `nexuslink_http_request_duration_seconds` | Histogram | Request latency distribution |
+| `nexuslink_ws_connections_active` | Gauge | Currently active WebSocket connections |
+| `nexuslink_ws_messages_total` | Counter | Total WebSocket messages sent and received |
+| `nexuslink_db_query_duration_seconds` | Histogram | Database query latency |
+| `nexuslink_db_pool_connections_active` | Gauge | Active database pool connections |
+| `nexuslink_messages_queued` | Gauge | Messages waiting in the offline delivery queue |
+| `nexuslink_file_uploads_total` | Counter | Total file uploads |
+| `nexuslink_file_storage_bytes` | Gauge | Total file storage usage in bytes |
+
+#### Logging
+
+Structured JSON logging is used in production. Log levels are configurable per module at runtime via the `RUST_LOG` environment variable:
+
+```bash
+# Example: info-level for most modules, debug for the chat module
+RUST_LOG="info,nexuslink_community::chat=debug" ./nexuslink-community-server
+```
+
+All log entries include request IDs, user IDs (when authenticated), and span context for distributed tracing compatibility.
+
+#### Backup Strategy
+
+- **Database**: Use `pg_dump` for logical backups or configure PostgreSQL continuous archiving (WAL) for point-in-time recovery. Recommended schedule: full backup daily, WAL archiving continuous.
+- **File storage**: If using local storage, back up the configured `local_path` directory. If using S3-compatible storage, configure bucket versioning and cross-region replication.
+- **Configuration**: Store `config.toml` and TLS certificates in version control or a secrets manager. Never store secrets in plaintext files in production.
+
+---
+
+## Tech Stack
+
+| Layer | Technology | Purpose |
+|-------|-----------|---------|
+| **UI** | Flutter (Dart) | Cross-platform native UI |
+| **Core** | Rust | Cryptography, networking, protocol logic |
+| **Bridge** | flutter_rust_bridge / FFI | Connect Flutter to Rust |
+| **Identity** | nmshd/rust-crypto | Secure hardware key management |
+| **Encryption** | Double Ratchet + X3DH | E2E message encryption |
+| **P2P** | libp2p + WebRTC | Direct peer connections |
+| **Server Framework** | Axum | Async HTTP and WebSocket server |
+| **Async Runtime** | tokio | Multi-threaded async I/O executor |
+| **Database Driver** | SQLx | Compile-time verified async SQL |
+| **Server Cache** | Redis (optional) | Caching, rate limiting, pub/sub fan-out |
+| **Middleware** | tower | Composable server middleware stack |
+| **Server TLS** | rustls | Pure-Rust TLS termination |
+| **Server Database** | PostgreSQL | Server-side persistent storage |
+| **Client Database** | SQLCipher | Encrypted local client storage |
+| **Serialization** | Protocol Buffers / FlatBuffers | Wire format |
+| **Metrics** | prometheus-client | Server observability |
+| **Logging** | tracing | Structured async-aware logging |
+| **CI/CD** | GitHub Actions | Automated testing and releases |
+
+---
+
+## Project Structure
+
+```
+NexusLink/
+|-- client/                          # Client applications
+|   |-- flutter/                     # Flutter UI (cross-platform)
+|   |   |-- lib/
+|   |   |   |-- screens/            # Page screens
+|   |   |   |-- widgets/            # Reusable UI components
+|   |   |   |-- services/           # Business logic services
+|   |   |   |-- models/             # Data models
+|   |   |   |-- providers/          # State management
+|   |   |   |-- utils/              # UI utilities
+|   |   |   +-- l10n/               # Internationalization (i18n)
+|   |   |-- assets/                  # Icons, images, fonts
+|   |   +-- test/                    # Widget and integration tests
+|   |
+|   +-- core/                        # Rust core library (shared logic)
+|       |-- src/
+|       |   |-- identity/            # Key generation, cross-signing, recovery
+|       |   |-- crypto/              # E2E encryption, Double Ratchet, key exchange
+|       |   |-- network/             # libp2p, WebRTC, NAT traversal
+|       |   |-- protocol/            # Message encoding/decoding, wire format
+|       |   |-- storage/             # Local encrypted database (SQLCipher)
+|       |   +-- ffi/                 # FFI bindings for Flutter
+|       |-- tests/                   # Integration tests
+|       +-- benches/                 # Performance benchmarks
+|
+|-- server/                          # Server applications (shared Rust workspace)
+|   |-- directory/                   # Official Directory Server
+|   |   |-- src/
+|   |   |   |-- api/                 # REST endpoints (community listing, KYC, reports)
+|   |   |   |-- auth/                # KYC verification, UUID authentication, challenge-response
+|   |   |   |-- db/                  # Database queries and connection pool management
+|   |   |   |-- models/              # Data models (community listing, KYC record, report)
+|   |   |   +-- services/            # Business logic (registration review, abuse detection, reputation)
+|   |   +-- migrations/              # SQLx database migrations (version-controlled schema)
+|   |
+|   |-- community/                   # Community Server (self-hostable)
+|   |   |-- src/
+|   |   |   |-- api/                 # REST and WebSocket endpoints (messages, channels, files, members)
+|   |   |   |-- chat/                # Real-time messaging engine (WebSocket handler, message routing,
+|   |   |   |                        #   offline queue, typing indicators, presence tracking)
+|   |   |   |-- db/                  # Database queries, connection pool, transaction management
+|   |   |   |-- models/              # Data models (member, channel, message, prekey, file metadata)
+|   |   |   |-- services/            # Business logic (member management, moderation, push notifications,
+|   |   |   |                        #   prekey management, file storage, rate limiting)
+|   |   |   +-- federation/          # Directory Server registration and heartbeat communication
+|   |   |-- migrations/              # SQLx database migrations (version-controlled schema)
+|   |   +-- docker-compose.yml       # One-click deployment with PostgreSQL and Redis
+|   |
+|   +-- shared/                      # Shared server crate (used by both directory and community)
+|       +-- src/
+|           |-- config/              # Layered configuration management (TOML + env vars)
+|           |-- error/               # Unified error types and HTTP error response mapping
+|           |-- types/               # Shared type definitions (UUID, pagination, timestamps)
+|           +-- utils/               # Common utilities (hashing, validation, middleware helpers)
+|
+|-- protocol/                        # Protocol specifications
+|   |-- specs/                       # Human-readable protocol documentation
+|   +-- schemas/                     # Protobuf / FlatBuffers schema definitions
+|
+|-- docs/                            # Documentation
+|   |-- en/                          # English documentation
+|   |-- cn/                          # Chinese documentation
+|   |-- diagrams/                    # Architecture diagrams
+|   +-- api/                         # API reference (auto-generated)
+|
+|-- tools/                           # Developer tools
+|   |-- cli/                         # CLI management tool
+|   |   +-- src/
+|   +-- scripts/                     # Build, deploy, test scripts
+|
+|-- .github/                         # GitHub configuration
+|   |-- workflows/                   # CI/CD pipelines
+|   +-- ISSUE_TEMPLATE/              # Issue templates
+|
+|-- README.md                        # Chinese README (primary)
+|-- README_EN.md                     # English README (this file)
+|-- ROADMAP.md                       # Development roadmap
+|-- ARCHITECTURE.md                  # Architecture deep-dive
+|-- CONTRIBUTING.md                  # Contribution guide
+|-- LICENSE                          # AGPLv3
++-- Cargo.toml                       # Rust workspace root
+```
+
+---
+
+## Quick Start
+
+> **Note:** NexusLink is in early development. The following instructions will be fully functional once Phase 1 is complete.
+
+### Prerequisites
+
+- Rust 1.75+ (with `cargo`)
+- Flutter 3.19+ (with `dart`)
+- PostgreSQL 15+ (for server)
+- Protobuf compiler (`protoc`)
+- Docker and Docker Compose (optional, for containerized deployment)
+
+### Client Development
+
+```bash
+# Clone the repository
+git clone https://github.com/yellowpeachxgp/NexusLink.git
+cd NexusLink
+
+# Build the Rust core library
+cargo build --release -p nexuslink-core
+
+# Generate FFI bindings
+cargo run --release -p nexuslink-codegen
+
+# Run the Flutter client
+cd client/flutter
+flutter pub get
+flutter run
+```
+
+To run client tests:
+
+```bash
+# Rust core unit and integration tests
+cargo test -p nexuslink-core
+
+# Flutter widget tests
+cd client/flutter
+flutter test
+```
+
+### Server Development
+
+```bash
+# Clone the repository
+git clone https://github.com/yellowpeachxgp/NexusLink.git
+cd NexusLink
+
+# Start a local PostgreSQL instance (if not already running)
+# Option A: Using Docker
+docker run -d --name nexuslink-pg \
+  -p 5432:5432 \
+  -e POSTGRES_USER=nexuslink \
+  -e POSTGRES_PASSWORD=dev_password \
+  -e POSTGRES_DB=nexuslink_dev \
+  postgres:15
+
+# Option B: Use docker-compose for the full stack
+cd server/community
+docker compose up -d
+cd ../..
+
+# Run database migrations
+DATABASE_URL="postgres://nexuslink:dev_password@localhost:5432/nexuslink_dev" \
+  cargo run -p nexuslink-community-server -- migrate
+
+# Build and run the Community Server in development mode
+cargo run -p nexuslink-community-server -- --config server/community/config.dev.toml
+
+# Build and run the Directory Server in development mode
+cargo run -p nexuslink-directory-server -- --config server/directory/config.dev.toml
+```
+
+To run server tests:
+
+```bash
+# All server tests (requires a running PostgreSQL instance)
+DATABASE_URL="postgres://nexuslink:dev_password@localhost:5432/nexuslink_test" \
+  cargo test -p nexuslink-community-server -p nexuslink-directory-server -p nexuslink-shared
+
+# Run with logging enabled for debugging
+RUST_LOG=debug DATABASE_URL="..." cargo test -p nexuslink-community-server -- --nocapture
+```
+
+---
+
+## Roadmap
+
+See [ROADMAP.md](./ROADMAP.md) for the full development plan.
+
+| Phase | Focus | Status |
+|-------|-------|--------|
+| Phase 0 | Project setup, CI/CD, protocol specs | Planned |
+| Phase 1 | Identity system, E2E encryption core | Planned |
+| Phase 2 | P2P messaging (Mode C) | Planned |
+| Phase 3 | Community server (Mode B) | Planned |
+| Phase 4 | Directory server + KYC (Mode A) | Planned |
+| Phase 5 | Cross-platform release and polish | Planned |
+| Phase 6 | Advanced features (voice, file, ZKP) | Planned |
+
+---
+
+## Comparison with Existing Solutions
+
+| Feature | NexusLink | Matrix | Telegram | Signal | Session |
+|---------|-----------|--------|----------|--------|---------|
+| No registration required | Yes (HW key) | No | No (phone) | No (phone) | Yes (key) |
+| E2E encryption default | Yes | Optional | No | Yes | Yes |
+| Self-hosted community | Yes | Yes (federation) | No | No | No |
+| P2P direct mode | Yes | Planned | No | No | Yes (onion) |
+| Official directory | Yes | matrix.org | Telegram Inc. | N/A | N/A |
+| Privacy isolation | Yes (by design) | No (metadata leaks) | No | N/A | Partial |
+| Real-name gate (optional) | Yes (for official) | No | No | No | No |
+| Multi-device sync | Yes | Yes | Yes | Yes | Yes |
+| Identity recovery | Mnemonic phrase | Password | Phone/cloud | Phone/PIN | Mnemonic |
+
+---
+
+## Security Model
+
+### Threat Model
+
+| Threat | Mitigation |
+|--------|-----------|
+| Server compromise | E2E encryption -- server never has plaintext messages |
+| Identity theft | Private key in secure hardware -- cannot be exported |
+| Metadata surveillance (official) | Directory server has no access to communication data |
+| Metadata surveillance (community) | Community server sees metadata but not content; users choose which server to trust |
+| Device loss | Mnemonic recovery phrase restores identity on new device |
+| Man-in-the-middle | Public key verification via QR code / safety numbers |
+
+### What NexusLink Does NOT Protect Against
+- A compromised community server can see communication metadata (who talks to whom, when) -- this is a conscious trade-off for usability
+- If a user's device is compromised (malware, root access), the attacker has access to decrypted messages
+- P2P mode requires STUN servers for NAT traversal; these servers can see IP addresses (but not message content)
+
+---
+
+## Contributing
+
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for detailed guidelines.
+
+We welcome contributions in all areas:
+- Protocol design and security review
+- Rust core library development
+- Flutter UI/UX design and implementation
+- Server development (Community Server and Directory Server)
+- Documentation and translation
+- Security auditing
+
+---
+
+## License
+
+NexusLink is licensed under the [GNU Affero General Public License v3.0](./LICENSE).
+
+This means:
+- You can freely use, modify, and distribute NexusLink
+- Any modifications must also be open-sourced under AGPLv3
+- If you run a modified version as a network service, you must make the source code available to users
+- This ensures NexusLink remains open and free for everyone
+
+---
+
+## Acknowledgments
+
+NexusLink builds upon the research and work of many open-source projects and protocols:
+
+- [Signal Protocol](https://signal.org/docs/) -- Double Ratchet and X3DH key agreement
+- [Matrix](https://matrix.org/) -- Federated messaging and cross-signing concepts
+- [libp2p](https://libp2p.io/) -- Peer-to-peer networking stack
+- [nmshd/rust-crypto](https://github.com/nmshd/rust-crypto) -- Cross-platform secure hardware abstraction
+- [Session](https://getsession.org/) -- Decentralized identity without registration
+- [Axum](https://github.com/tokio-rs/axum) -- Ergonomic and modular web framework for Rust
+- [tokio](https://tokio.rs/) -- Asynchronous runtime for Rust
+
+---
+
+<p align="center">
+  <strong>Your messages. Your identity. Your choice.</strong>
+</p>

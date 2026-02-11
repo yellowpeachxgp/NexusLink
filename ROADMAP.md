@@ -34,6 +34,10 @@ Foundation     Identity &     P2P Mode       Community      Directory &    Relea
 | 0.4 | Protocol specification | Write Protocol Buffer schemas for all message types (see ARCHITECTURE.md §9). 编写 Protobuf 协议定义 |
 | 0.5 | Development docs | Set up mdBook or similar for protocol specification site. 搭建协议规范文档站 |
 | 0.6 | Code style & linting | Configure rustfmt, clippy, dart formatter, commit hooks. 配置代码风格检查 |
+| 0.7 | Rust server crate scaffold | Set up `nexuslink-community-server` crate with Axum + tokio + SQLx dependencies. Implement basic HTTP service skeleton: health check endpoint, graceful shutdown, configuration loading (TOML/env). 搭建 Rust 服务端 crate（Axum + tokio + SQLx），实现基本 HTTP 服务骨架：健康检查端点、优雅关闭、配置加载 |
+| 0.8 | Database migration tooling | Configure SQLx migrate CLI and embedded migrations. Create initial PostgreSQL schema: `migrations/0001_init.sql` with core tables (`users`, `devices`, `prekeys`, `config`). Set up migration version tracking. 配置 SQLx 数据库迁移工具，创建初始 PostgreSQL schema |
+| 0.9 | Docker development environment | Create `docker-compose.dev.yml` with: PostgreSQL 16 (with pgvector extension), Redis 7 (for caching/pub-sub), server binary with cargo-watch hot-reload. Shared volumes for persistent dev data. 搭建 Docker 开发环境（PostgreSQL + Redis + 服务端热重载） |
+| 0.10 | Server CI pipeline | GitHub Actions workflow for server: compile check, `cargo test`, clippy lint with deny warnings, `sqlx prepare --check` for offline query verification, migration consistency check. Run against a PostgreSQL service container. 服务端 CI 流水线（编译、测试、clippy、数据库迁移检查） |
 
 ### Deliverables / 交付物
 - [ ] Compiling Rust workspace with empty crate skeletons
@@ -42,6 +46,10 @@ Foundation     Identity &     P2P Mode       Community      Directory &    Relea
 - [ ] CI/CD green on all platforms
 - [ ] Protocol Buffer `.proto` files for core message types
 - [ ] AGPLv3 LICENSE file
+- [ ] Server crate runs and responds to health check on `GET /healthz`
+- [ ] PostgreSQL schema initialized via `sqlx migrate run`
+- [ ] `docker-compose -f docker-compose.dev.yml up` brings up full dev environment
+- [ ] Server CI pipeline passes on every PR
 
 ---
 
@@ -65,6 +73,9 @@ Foundation     Identity &     P2P Mode       Community      Directory &    Relea
 | 1.8 | Local encrypted storage | SQLCipher integration. Store sessions, keys, messages locally. 本地加密存储 |
 | 1.9 | Cross-signing | IK → SSK → DSK signing chain. Device authorization and revocation. 交叉签名 |
 | 1.10 | Flutter identity UI | First-launch screen: key generation animation, mnemonic display/verify, connection mode selection. Flutter 身份界面 |
+| 1.11 | Server UUID auth module | Implement server-side challenge-response authentication: server issues random nonce, client signs with device key, server verifies signature against registered public key. Token issuance (JWT or opaque token) with configurable expiry. Session management and refresh flow. 服务端 UUID 认证模块：挑战-应答协议实现，令牌签发与会话管理 |
+| 1.12 | Prekey storage service | REST API endpoints for prekey bundle management: `POST /v1/prekeys` (upload bundle), `GET /v1/prekeys/{uuid}` (fetch bundle), `DELETE /v1/prekeys/{uuid}/{key_id}` (consume one-time prekey). Auto-replenish threshold notification. Prekey count monitoring endpoint. 预密钥存储服务：接收和提供 prekey bundles 的 REST API |
+| 1.13 | Server shared layer foundation | Build shared server infrastructure: unified error handling with structured error codes (`AppError` enum mapped to HTTP status), configuration management (`nexuslink.toml` + environment variable overrides), standardized JSON API response envelope (`{"ok": bool, "data": ..., "error": ...}`), request ID tracing propagation. 服务端共享层基础：统一错误处理、配置管理、API 响应格式、请求追踪 |
 
 ### Deliverables / 交付物
 - [ ] `nexuslink-core` crate with identity and crypto modules, 90%+ test coverage
@@ -73,6 +84,9 @@ Foundation     Identity &     P2P Mode       Community      Directory &    Relea
 - [ ] Can encrypt/decrypt group messages with Sender Keys
 - [ ] Flutter app: first-launch onboarding flow complete
 - [ ] Benchmark: encryption/decryption throughput on target devices
+- [ ] Server authenticates clients via UUID challenge-response protocol
+- [ ] Prekey bundle REST API functional with integration tests
+- [ ] Unified error handling and API response format adopted across all server endpoints
 
 ### Key Risks / 关键风险
 - Secure hardware API differences across platforms may cause edge cases
@@ -100,6 +114,8 @@ Foundation     Identity &     P2P Mode       Community      Directory &    Relea
 | 2.7 | Typing indicators & receipts | Real-time presence over P2P connection. 输入指示器与回执 |
 | 2.8 | Flutter chat UI | Basic chat interface: message list, input bar, read receipts, connection status. Flutter 聊天界面 |
 | 2.9 | Contact management | Add/remove contacts, nickname, notes. Stored locally encrypted. 联系人管理 |
+| 2.10 | STUN/TURN relay deployment | Configure and package STUN/TURN relay service deployment: bundled coturn configuration templates, Docker image for one-command TURN server deployment, credential provisioning (static or time-limited via HMAC), bandwidth and connection limits. Provide deployment guide for both self-hosted and cloud environments. STUN/TURN 中继服务部署配置：coturn 配置模板、Docker 镜像、凭据管理 |
+| 2.11 | Offline message relay service | Server-side encrypted message staging service: accept and store encrypted blobs (max 256KB per message, configurable) for offline recipients, TTL-based automatic expiration and cleanup (cron job or tokio background task), delivery confirmation and blob deletion upon recipient retrieval, storage quota per user to prevent abuse. 离线消息中继服务：接收加密消息暂存、TTL 自动过期清理、投递确认、用户配额管理 |
 
 ### Deliverables / 交付物
 - [ ] Two NexusLink clients can chat over P2P (same LAN and across Internet)
@@ -107,6 +123,8 @@ Foundation     Identity &     P2P Mode       Community      Directory &    Relea
 - [ ] Messages delivered when both online; queued at relay when offline
 - [ ] Chat UI functional on all 5 platforms
 - [ ] NAT traversal success rate > 80% in testing
+- [ ] STUN/TURN relay deployable via Docker with documented configuration
+- [ ] Offline relay stores and delivers messages with TTL enforcement
 
 ### Key Risks / 关键风险
 - NAT traversal unreliable on symmetric NATs (carrier-grade NAT) — need TURN fallback
@@ -125,10 +143,10 @@ Foundation     Identity &     P2P Mode       Community      Directory &    Relea
 
 | # | Task / 任务 | Details / 详细说明 |
 |---|---|---|
-| 3.1 | Server framework | Axum-based HTTP/WebSocket server with TLS. Build the core server binary. 服务器框架 |
+| 3.1 | Server framework | Axum-based HTTP/WebSocket server with TLS. Build the core server binary. Detailed: define Axum router with versioned API prefix (`/v1/`), tower middleware stack including `tower-http` layers for structured logging (`TraceLayer`), authentication extraction, rate limiting (`governor`), CORS policy, request body size limits. Implement `AppError` → `IntoResponse` for consistent error JSON. Graceful shutdown via `tokio::signal`. 服务器框架：Axum 路由、tower 中间件栈（日志、认证、限流、CORS）、统一错误处理、优雅关闭 |
 | 3.2 | Authentication | UUID-based auth: client signs challenge with device key, server verifies. UUID 认证 |
 | 3.3 | Prekey management | Store/serve prekey bundles for members. Auto-replenish notifications. 预密钥管理 |
-| 3.4 | Message routing | WebSocket-based real-time message delivery. Queue for offline users. 消息路由 |
+| 3.4 | Message routing | WebSocket-based real-time message delivery. Queue for offline users. Detailed: WebSocket connection lifecycle management with configurable heartbeat interval (ping/pong, default 30s) and idle timeout, automatic reconnection protocol with exponential backoff on client side, message fan-out to all registered devices of a recipient, offline message queue implemented via PostgreSQL `NOTIFY`/`LISTEN` for single-node or Redis pub/sub for multi-node deployments, message ordering guarantees with server-assigned sequence IDs per channel. 消息路由：WebSocket 连接管理（心跳、断线重连）、消息扇出到多设备、离线消息队列（PostgreSQL NOTIFY 或 Redis pub/sub）、消息排序 |
 | 3.5 | Channels & groups | Create/manage channels (text). Permissions: admin, moderator, member. 频道与群组 |
 | 3.6 | Media handling | Encrypted file upload/download. Thumbnail generation. Size limits. 媒体处理 |
 | 3.7 | Moderation tools | Ban, mute, delete (metadata only — can't read content). Moderation log. 管理工具 |
@@ -137,6 +155,10 @@ Foundation     Identity &     P2P Mode       Community      Directory &    Relea
 | 3.10 | Flutter server UI | Server browser, channel list, member list, channel chat view. Flutter 服务器界面 |
 | 3.11 | Push notifications | FCM (Android), APNs (iOS) integration via community server. 推送通知 |
 | 3.12 | Multi-device message fan-out | Server encrypts and delivers to all registered devices of a user. 多设备消息分发 |
+| 3.13 | Database design & implementation | Complete PostgreSQL schema design and implementation. Core tables: `members` (uuid, display_name, avatar_hash, joined_at, role, status), `devices` (device_id, member_uuid, public_key, device_name, last_seen), `channels` (id, name, type, topic, created_by, created_at, sort_order), `channel_members` (channel_id, member_uuid, permissions, joined_at), `messages` (id, channel_id, sender_uuid, encrypted_payload, sequence_id, sent_at, edited_at), `media` (id, message_id, encrypted_blob_path, mime_type, size_bytes, thumbnail_path), `prekeys` (id, member_uuid, key_data, uploaded_at, consumed), `audit_log` (id, actor_uuid, action, target_type, target_id, metadata_json, timestamp), `server_config` (key, value, updated_at). Indexes on foreign keys, composite indexes for common query patterns (e.g., messages by channel + sequence_id). Proper use of PostgreSQL features: ULID/UUIDv7 for ordered primary keys, JSONB for flexible metadata, `timestamptz` for all timestamps. 数据库设计与实现：完整的 PostgreSQL schema，包括 members、channels、messages、media、audit_log 等所有表定义，索引优化 |
+| 3.14 | Redis cache layer | Implement Redis-backed caching and real-time data layer: online presence tracking (member UUID → last heartbeat timestamp, with configurable TTL for "online" threshold), session cache (auth tokens → session data, avoiding repeated DB lookups), rate limiting counters (sliding window via Redis sorted sets or `INCR`+`EXPIRE`), channel unread counts cache, typing indicator pub/sub. Use `deadpool-redis` connection pool. Define clear cache invalidation strategy and key naming conventions (`nexuslink:{entity}:{id}:{field}`). Redis 缓存层：在线状态追踪、会话缓存、速率限制计数器、未读消息计数、输入指示器 pub/sub |
+| 3.15 | Server performance testing | Establish performance baseline and optimization: load testing with wrk (HTTP endpoints) and k6 (WebSocket scenarios), target benchmarks: 10,000 concurrent WebSocket connections per node, < 50ms p99 message delivery latency, 1,000 messages/second throughput per channel. Database query profiling with `EXPLAIN ANALYZE`, index tuning, connection pool sizing (`sqlx::PgPoolOptions`). Identify and resolve N+1 query patterns. Memory profiling with `jemalloc` + `heaptrack`. Document performance characteristics and capacity planning guidelines. 服务端性能测试：wrk/k6 压测、WebSocket 并发测试、数据库查询优化、内存分析、容量规划 |
+| 3.16 | Server security hardening | Comprehensive server-side security measures: TLS 1.3 configuration (via `rustls`, reject TLS < 1.2), strict request validation (content-type checking, payload size limits, malformed JSON rejection), SQL injection prevention verified (all queries via SQLx compile-time checked parameterized queries), input sanitization and validation layer (`validator` crate for struct field constraints), HTTP security headers (HSTS, X-Content-Type-Options, X-Frame-Options), authentication token rotation and revocation, brute-force protection on auth endpoints (exponential backoff + lockout), dependency audit via `cargo audit` in CI. 服务端安全加固：TLS 配置、请求验证、SQL 注入防护（SQLx 参数化查询）、输入校验、安全响应头、认证令牌轮转、暴力破解防护 |
 
 ### Deliverables / 交付物
 - [ ] Community server deployable via `docker-compose up`
@@ -145,11 +167,16 @@ Foundation     Identity &     P2P Mode       Community      Directory &    Relea
 - [ ] Admin CLI can manage server
 - [ ] Push notifications on mobile
 - [ ] Load test: 1000 concurrent users on single community server
+- [ ] Complete PostgreSQL schema with all tables, indexes, and migration files
+- [ ] Redis cache layer operational with documented key schema
+- [ ] Performance test suite with reproducible benchmarks
+- [ ] Security hardening checklist fully implemented and verified
 
 ### Key Risks / 关键风险
 - WebSocket scaling under load — may need connection pooling
 - Push notification requires Firebase/APNs accounts (infrastructure dependency)
 - Encrypted media storage can grow quickly — need storage management
+- Redis as a dependency increases operational complexity for self-hosters — provide embedded fallback or clear documentation
 
 ---
 
@@ -163,7 +190,7 @@ Foundation     Identity &     P2P Mode       Community      Directory &    Relea
 
 | # | Task / 任务 | Details / 详细说明 |
 |---|---|---|
-| 4.1 | Directory server | REST API for community registration, search, deregistration. 目录服务器 |
+| 4.1 | Directory server | REST API for community registration, search, deregistration. Detailed: full CRUD endpoints (`POST /v1/communities`, `GET /v1/communities`, `GET /v1/communities/{id}`, `PATCH /v1/communities/{id}`, `DELETE /v1/communities/{id}`), PostgreSQL full-text search using `tsvector`/`tsquery` on community name, description, and tags (with `pg_trgm` for fuzzy matching), paginated responses with cursor-based pagination (keyset pagination for stable ordering), sorting by relevance, member count, creation date, or last active time. OpenAPI/Swagger spec auto-generated via `utoipa`. 目录服务器：REST API 完整实现、PostgreSQL 全文搜索（tsvector + pg_trgm 模糊匹配）、游标分页、多维度排序、OpenAPI 文档 |
 | 4.2 | KYC integration | Identity verification service. Options: integrate third-party KYC provider or build simple document-based verification. 实名认证集成 |
 | 4.3 | Community registration flow | Community server → directory server: submit name, description, endpoint, owner UUID. 社区注册流程 |
 | 4.4 | Community search | Full-text search, tag-based filtering, sorting. Client-side community browser. 社区搜索 |
@@ -171,6 +198,9 @@ Foundation     Identity &     P2P Mode       Community      Directory &    Relea
 | 4.6 | Official channels | Host official channels on directory server's built-in community server instance. 官方频道 |
 | 4.7 | Rate limiting & anti-spam | Request rate limits, proof-of-work for registration, anomaly detection. 限流与反垃圾 |
 | 4.8 | Flutter directory UI | Community discovery screen, KYC flow, official channel access. Flutter 目录界面 |
+| 4.9 | KYC data security | Secure handling of identity verification data: encrypt all KYC documents at rest (AES-256-GCM with per-document keys, master key in HSM or vault), comprehensive access audit trail (who accessed which document, when, why), data retention policy (auto-delete verified documents after configurable period, default 90 days, retain only verification status), GDPR compliance considerations (right to erasure implementation, data portability export, explicit consent tracking, DPO contact endpoint), data minimization (store only what is strictly necessary for verification). KYC 数据安全：加密存储身份文件、访问审计、数据保留策略、GDPR 合规考虑、数据最小化 |
+| 4.10 | Directory server high availability | Production-grade availability for the directory server: PostgreSQL primary-replica replication (streaming replication with `pg_basebackup`), read-only replicas for search queries (route via SQLx `PgPoolOptions` with separate read/write pools), DDoS protection layer (Cloudflare or similar reverse proxy with WAF rules, geographic rate limiting), horizontal scaling considerations (stateless API servers behind load balancer), automated failover for database (Patroni or similar), uptime target: 99.9%. 目录服务器高可用：数据库主从复制、只读副本、DDoS 防护、水平扩展、自动故障转移 |
+| 4.11 | Community server health monitoring | Directory server actively monitors registered communities: periodic health checks (HTTP `GET /healthz` every 5 minutes, configurable), track response latency and success rate over rolling window, automatic status marking (online / degraded / offline) based on health check results, notify community owners via stored contact method when status changes, display real-time status indicators in client community browser, deregister communities that have been offline beyond a configurable threshold (default 30 days) with owner notification grace period. 社区服务器健康监测：定期检查已注册社区的可用性，标记下线社区，通知管理员，自动清理长期离线社区 |
 
 ### Deliverables / 交付物
 - [ ] Directory server deployed and running
@@ -179,11 +209,15 @@ Foundation     Identity &     P2P Mode       Community      Directory &    Relea
 - [ ] Client can browse, search, and join communities via directory
 - [ ] Abuse reporting works end-to-end
 - [ ] Rate limiting prevents spam registration
+- [ ] KYC documents encrypted at rest with full access audit trail
+- [ ] Directory server running with read replicas and DDoS protection
+- [ ] Health monitoring active for all registered communities
 
 ### Key Risks / 关键风险
 - KYC requires handling sensitive personal data — legal and security implications
 - Directory server is a centralization point — needs DDoS protection
 - KYC review process needs human reviewers or AI-assisted verification
+- GDPR and data protection regulation compliance across jurisdictions requires legal review
 
 ---
 
@@ -205,6 +239,9 @@ Foundation     Identity &     P2P Mode       Community      Directory &    Relea
 | 5.6 | Documentation | User guide, server deployment guide, FAQ, troubleshooting. 文档完善 |
 | 5.7 | Beta testing program | Closed beta → open beta. Feedback collection and bug tracking. Beta 测试 |
 | 5.8 | Landing page & website | Project website with download links, docs, and community links. 官网 |
+| 5.9 | Server production deployment docs | Comprehensive server deployment documentation: single-node deployment guide (systemd unit file, environment configuration, reverse proxy with nginx/caddy), multi-node cluster deployment guide (load balancer setup, shared PostgreSQL, Redis cluster, session affinity considerations), TLS certificate management (Let's Encrypt auto-renewal via certbot or caddy, manual certificate installation guide, certificate pinning considerations for clients), hardware sizing recommendations by user count tier (100 / 1,000 / 10,000 users). 服务端生产部署文档：单机部署指南、集群部署指南、TLS 证书管理、硬件规模建议 |
+| 5.10 | Automated operations scripts | Server operations automation toolkit: database backup script (pg_dump with compression, scheduled via cron, upload to S3-compatible storage with retention rotation), database restore and point-in-time recovery procedure, zero-downtime upgrade script (rolling restart for multi-node, database migration pre-check), log rotation configuration (logrotate for file-based logs, or structured JSON logs to stdout for container environments), disk space monitoring and media storage cleanup for expired/orphaned files. 自动化运维脚本：备份、恢复、升级、日志轮转、磁盘监控 |
+| 5.11 | Monitoring and alerting | Production observability stack: expose Prometheus metrics from server (`/metrics` endpoint via `metrics` + `metrics-exporter-prometheus` crates), key metrics: active WebSocket connections, message throughput, request latency histograms, database connection pool usage, error rates by type, queue depths. Grafana dashboard templates: server overview, per-channel activity, system resources, alert history. Alerting rules: high error rate, database connection exhaustion, disk space low, certificate expiry approaching, health check failures. 监控告警搭建：Prometheus 指标暴露 + Grafana 仪表盘模板 + 告警规则 |
 
 ### Deliverables / 交付物
 - [ ] App published on all major stores/platforms
@@ -212,6 +249,9 @@ Foundation     Identity &     P2P Mode       Community      Directory &    Relea
 - [ ] < 3 second cold start on mid-range devices
 - [ ] User documentation complete in 2 languages
 - [ ] Beta community of 100+ testers
+- [ ] Server deployment guide covering single-node and cluster topologies
+- [ ] Automated backup/restore/upgrade scripts tested and documented
+- [ ] Grafana dashboard importable via JSON template, alerting rules ready for production
 
 ---
 
@@ -232,6 +272,10 @@ Foundation     Identity &     P2P Mode       Community      Directory &    Relea
 | **Message search** | Client-side full-text search over encrypted message database. 消息搜索 | Medium |
 | **Bots & Integrations** | Bot API for community automation (RSS, notifications, moderation). 机器人与集成 | Medium |
 | **Encrypted backup** | Cloud-encrypted backup of messages (user holds key). 加密备份 | Medium |
+| **WebSocket cluster** | Multi-node WebSocket message synchronization: shared message bus (Redis Streams or NATS), sticky sessions with failover, consistent hashing for channel-to-node assignment, zero-message-loss node migration during rolling deployments. WebSocket 集群（多节点消息同步） | Medium |
+| **Server plugin system** | Extensible server-side plugin architecture: plugin trait definition (`NexusPlugin` with lifecycle hooks: `on_load`, `on_message`, `on_member_join`, etc.), WASM-based sandboxed execution for third-party plugins, built-in plugins for common needs (welcome messages, auto-moderation, webhook relay), plugin marketplace metadata format. 服务端插件系统（WASM 沙箱执行、生命周期钩子、插件市场） | Medium |
+| **GraphQL API** | Optional GraphQL endpoint alongside REST: schema stitching community server data, subscription support for real-time updates (backed by WebSocket), introspection for developer tooling, query complexity analysis and depth limiting to prevent abuse. GraphQL API（可选，实时订阅、查询复杂度限制） | Low |
+| **S3-compatible object storage** | Pluggable media storage backend: support S3-compatible APIs (AWS S3, MinIO, Cloudflare R2) for encrypted media blobs, configurable storage backend (local filesystem / S3), automatic migration tool between storage backends, content-addressable storage for deduplication of identical encrypted blobs. S3 兼容对象存储（可插拔存储后端、去重） | Low |
 | **Disappearing messages** | Auto-delete messages after configurable time. 阅后即焚 | Low |
 | **Reactions & threads** | Emoji reactions and threaded replies. 表情回应与消息线程 | Low |
 | **Custom themes** | Community-specific themes and branding. 自定义主题 | Low |
@@ -325,14 +369,14 @@ Foundation     Identity &     P2P Mode       Community      Directory &    Relea
 
 ## Version Milestones / 版本里程碑
 
-| Version | Content / 内容 | Corresponds to |
-|---------|---|---|
-| `v0.1.0-alpha` | Identity + encryption + local test | Phase 0 + 1 |
-| `v0.2.0-alpha` | P2P messaging works | Phase 2 |
-| `v0.3.0-alpha` | Community server functional | Phase 3 |
-| `v0.4.0-beta` | Directory server + KYC + all 3 modes | Phase 4 |
-| `v1.0.0` | First stable public release | Phase 5 |
-| `v1.x` | Voice, video, ZKP, bridges | Phase 6 |
+| Version | Content / 内容 | Server Content / 服务端内容 | Corresponds to |
+|---------|---|---|---|
+| `v0.1.0-alpha` | Identity + encryption + local test | Server crate scaffold, DB migrations, dev Docker, UUID auth module, prekey API, shared layer | Phase 0 + 1 |
+| `v0.2.0-alpha` | P2P messaging works | STUN/TURN relay deployment, offline message relay service | Phase 2 |
+| `v0.3.0-alpha` | Community server functional | Full DB schema, Redis cache layer, WebSocket message routing, middleware stack, performance baseline, security hardening | Phase 3 |
+| `v0.4.0-beta` | Directory server + KYC + all 3 modes | Full-text search API, KYC data encryption, high availability setup, community health monitoring | Phase 4 |
+| `v1.0.0` | First stable public release | Production deployment docs, backup/restore/upgrade scripts, Prometheus + Grafana monitoring | Phase 5 |
+| `v1.x` | Voice, video, ZKP, bridges | WebSocket cluster, plugin system, GraphQL API (optional), S3-compatible object storage | Phase 6 |
 
 ---
 

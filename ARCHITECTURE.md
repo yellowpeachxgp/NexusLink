@@ -18,6 +18,8 @@
 9. [Message Format / 消息格式](#9-message-format--消息格式)
 10. [Storage / 存储](#10-storage--存储)
 11. [Security Analysis / 安全性分析](#11-security-analysis--安全性分析)
+12. [Server Shared Layer / 服务端共享层](#12-server-shared-layer--服务端共享层)
+13. [Server Deployment Architecture / 服务端部署架构](#13-server-deployment-architecture--服务端部署架构)
 
 ---
 
@@ -443,6 +445,354 @@ kyc_records (
 )
 ```
 
+### 6.3 Middleware Stack / 中间件管道
+
+The directory server uses a tower-based middleware pipeline. Each incoming HTTP request passes through the following layers in order:
+
+目录服务器使用基于 tower 的中间件管道。每个传入的 HTTP 请求按以下顺序通过各层：
+
+```
+Incoming Request / 传入请求
+        │
+        ▼
+┌──────────────────────────────────────┐
+│  1. Request Logging (tracing)        │
+│     请求日志（tracing crate）         │
+│     - Method, path, remote IP        │
+│     - Request ID (UUID v7)           │
+│     - Duration tracked on response   │
+└──────────────────┬───────────────────┘
+                   │
+                   ▼
+┌──────────────────────────────────────┐
+│  2. CORS (tower-http CorsLayer)      │
+│     跨域资源共享                      │
+│     - Allowed origins: configurable  │
+│     - Methods: GET, POST, DELETE     │
+│     - Max age: 3600s                 │
+└──────────────────┬───────────────────┘
+                   │
+                   ▼
+┌──────────────────────────────────────┐
+│  3. Rate Limiting                    │
+│     速率限制                          │
+│     - Per-IP sliding window          │
+│     - Limits: 60 req/min general,    │
+│       5 req/min for KYC endpoints    │
+│     - Returns 429 with Retry-After   │
+└──────────────────┬───────────────────┘
+                   │
+                   ▼
+┌──────────────────────────────────────┐
+│  4. Authentication                   │
+│     认证                              │
+│     - Bearer token (Ed25519 signed   │
+│       challenge-response)            │
+│     - Token contains: UUID, device   │
+│       ID, expiry, signature          │
+│     - Public endpoints bypass auth   │
+│       (search, community details)    │
+└──────────────────┬───────────────────┘
+                   │
+                   ▼
+┌──────────────────────────────────────┐
+│  5. Compression                      │
+│     响应压缩                          │
+│     - gzip / brotli (Accept-Encoding)│
+│     - Minimum body size: 256 bytes   │
+└──────────────────┬───────────────────┘
+                   │
+                   ▼
+┌──────────────────────────────────────┐
+│  6. Router (axum::Router)            │
+│     路由分发                          │
+│     - /api/v1/community/*            │
+│     - /api/v1/kyc/*                  │
+│     - /api/v1/report/*               │
+│     - /health                        │
+└──────────────────────────────────────┘
+```
+
+Rust implementation sketch / Rust 实现概要：
+
+```rust
+use axum::Router;
+use tower::ServiceBuilder;
+use tower_http::{cors::CorsLayer, compression::CompressionLayer, trace::TraceLayer};
+
+fn build_middleware_stack(app: Router, config: &AppConfig) -> Router {
+    app.layer(
+        ServiceBuilder::new()
+            .layer(TraceLayer::new_for_http())        // 1. logging
+            .layer(build_cors_layer(config))           // 2. CORS
+            .layer(build_rate_limit_layer(config))     // 3. rate limiting
+            .layer(AuthLayer::new(config.auth.clone()))// 4. authentication
+            .layer(CompressionLayer::new())            // 5. compression
+    )
+}
+```
+
+### 6.4 Database Connection Pool / 数据库连接池管理
+
+The directory server manages PostgreSQL connections through SQLx with PgPool. Connection pooling is essential for handling concurrent API requests efficiently.
+
+目录服务器通过 SQLx 的 PgPool 管理 PostgreSQL 连接。连接池对于高效处理并发 API 请求至关重要。
+
+```rust
+use sqlx::postgres::{PgPoolOptions, PgPool};
+
+async fn init_db_pool(config: &DatabaseConfig) -> PgPool {
+    PgPoolOptions::new()
+        .max_connections(config.max_connections)  // default: 20
+        .min_connections(config.min_connections)  // default: 5
+        .acquire_timeout(Duration::from_secs(5))
+        .idle_timeout(Duration::from_secs(600))
+        .max_lifetime(Duration::from_secs(1800))
+        .connect(&config.database_url)
+        .await
+        .expect("Failed to create database pool")
+}
+```
+
+```
+Connection Pool Parameters / 连接池参数：
+
+  max_connections:   20 (default, tunable)
+                     最大连接数：20（默认，可调整）
+  min_connections:    5 (keeps warm connections ready)
+                     最小连接数：5（保持热连接就绪）
+  acquire_timeout:    5s (fail fast if pool exhausted)
+                     获取超时：5秒（池耗尽时快速失败）
+  idle_timeout:     600s (reclaim unused connections)
+                     空闲超时：600秒（回收未使用连接）
+  max_lifetime:    1800s (prevent stale connections)
+                     最大存活：1800秒（防止过期连接）
+
+Health check query / 健康检查查询：
+  SELECT 1   (executed periodically on idle connections)
+             （定期在空闲连接上执行）
+```
+
+### 6.5 Directory Search Implementation / 目录搜索实现
+
+Community search relies on PostgreSQL full-text search (tsvector/tsquery) combined with tag filtering and cursor-based pagination.
+
+社区搜索依赖 PostgreSQL 全文检索（tsvector/tsquery），并结合标签过滤与游标分页。
+
+```sql
+-- Full-text search index / 全文检索索引
+ALTER TABLE communities ADD COLUMN search_vector tsvector
+    GENERATED ALWAYS AS (
+        setweight(to_tsvector('english', coalesce(name, '')), 'A') ||
+        setweight(to_tsvector('english', coalesce(description, '')), 'B')
+    ) STORED;
+
+CREATE INDEX idx_communities_search ON communities USING GIN (search_vector);
+
+-- Tag index (GIN for array containment queries)
+-- 标签索引（GIN 用于数组包含查询）
+CREATE INDEX idx_communities_tags ON communities USING GIN (tags);
+```
+
+```
+Search Query Flow / 搜索查询流程：
+
+  Client request / 客户端请求：
+    GET /api/v1/community/search?q=gaming&tags=fps,open&limit=20&cursor=xxx
+
+  Server executes / 服务端执行：
+    1. Parse query text → tsquery ('gaming')
+       解析查询文本 → tsquery
+    2. Parse tags → array containment filter (tags @> '{fps,open}')
+       解析标签 → 数组包含过滤
+    3. Combine with ts_rank for relevance scoring
+       结合 ts_rank 进行相关性排序
+    4. Apply cursor-based pagination (WHERE created_at < cursor_timestamp)
+       应用游标分页
+    5. Return results with next_cursor token
+       返回结果及 next_cursor 令牌
+```
+
+```sql
+-- Example search query / 搜索查询示例
+SELECT id, name, description, tags, member_count,
+       ts_rank(search_vector, query) AS relevance
+FROM communities, plainto_tsquery('english', $1) AS query
+WHERE search_vector @@ query
+  AND ($2::varchar[] IS NULL OR tags @> $2)
+  AND verified = true
+  AND ($3::timestamptz IS NULL OR created_at < $3)  -- cursor
+ORDER BY relevance DESC, created_at DESC
+LIMIT $4;
+```
+
+### 6.6 KYC Complete Flow / KYC 完整流程
+
+The Know Your Customer (KYC) process is required for community registration. It ensures accountability while minimizing data exposure.
+
+实名认证（KYC）是社区注册的前提。它在确保责任追溯的同时尽量减少数据暴露。
+
+```
+Client                     Directory Server               Compliance System
+客户端                      目录服务器                       合规系统
+
+  │                              │                              │
+  │  1. POST /kyc/initiate       │                              │
+  │  Body: { uuid, device_sig }  │                              │
+  │─────────────────────────────►│                              │
+  │                              │                              │
+  │  2. Return challenge nonce   │                              │
+  │     + required document list │                              │
+  │◄─────────────────────────────│                              │
+  │                              │                              │
+  │  3. POST /kyc/verify         │                              │
+  │  Body: {                     │                              │
+  │    uuid,                     │                              │
+  │    signed_challenge,         │                              │
+  │    encrypted_documents: [    │                              │
+  │      { type: "id_card",      │                              │
+  │        data: <encrypted> },  │                              │
+  │      { type: "selfie",       │                              │
+  │        data: <encrypted> }   │                              │
+  │    ]                         │                              │
+  │  }                           │                              │
+  │─────────────────────────────►│                              │
+  │                              │  4. Verify signature         │
+  │                              │     验证签名                  │
+  │                              │                              │
+  │                              │  5. Store encrypted docs     │
+  │                              │     存储加密文件              │
+  │                              │                              │
+  │                              │  6. Forward to compliance    │
+  │                              │     转发至合规系统            │
+  │                              │─────────────────────────────►│
+  │                              │                              │
+  │  7. Status: "pending"        │                              │
+  │◄─────────────────────────────│                              │
+  │                              │                              │
+  │                              │  8. Compliance reviews docs  │
+  │                              │     合规团队审核文件          │
+  │                              │                              │
+  │                              │  9. Decision: approved /     │
+  │                              │     rejected (with reason)   │
+  │                              │     决定：通过/拒绝（附原因）  │
+  │                              │◄─────────────────────────────│
+  │                              │                              │
+  │                              │  10. Update kyc_records      │
+  │                              │      status = 'approved'     │
+  │                              │      更新认证记录状态         │
+  │                              │                              │
+  │  11. GET /kyc/status         │                              │
+  │─────────────────────────────►│                              │
+  │                              │                              │
+  │  12. Response: "approved"    │                              │
+  │      (can now register       │                              │
+  │       communities)           │                              │
+  │      响应："已通过"            │                              │
+  │      （现在可以注册社区）      │                              │
+  │◄─────────────────────────────│                              │
+  │                              │                              │
+
+Document retention policy / 文件保留策略：
+  - Encrypted documents deleted after 90 days post-approval
+    加密文件在审核通过后 90 天删除
+  - Only KYC status (approved/rejected) retained permanently
+    仅永久保留认证状态（通过/拒绝）
+  - Compliance team uses separate encryption keys
+    合规团队使用独立加密密钥
+```
+
+### 6.7 Anti-Abuse Mechanisms / 反滥用机制
+
+The directory server employs multiple layers of protection against automated abuse, spam registrations, and denial-of-service attacks.
+
+目录服务器采用多层防护机制，抵御自动化滥用、垃圾注册和拒绝服务攻击。
+
+```
+Anti-Abuse Stack / 反滥用体系：
+
+1. IP-Based Rate Limiting / 基于 IP 的速率限制
+   ─────────────────────────────────────────────
+   - Sliding window algorithm (token bucket per IP)
+     滑动窗口算法（每 IP 令牌桶）
+   - General API:     60 requests / minute
+     通用 API：       60 请求/分钟
+   - KYC endpoints:    5 requests / minute
+     KYC 接口：        5 请求/分钟
+   - Search:          30 requests / minute
+     搜索：           30 请求/分钟
+   - Exceeded → HTTP 429 + Retry-After header
+     超限 → HTTP 429 + Retry-After 头
+
+2. Proof-of-Work Registration / 工作量证明注册
+   ─────────────────────────────────────────────
+   Before registering a community, the client must solve a
+   computational puzzle (Hashcash-style):
+   注册社区前，客户端必须求解计算谜题（Hashcash 风格）：
+
+   - Server issues:  challenge = SHA-256(random_nonce || timestamp)
+     服务端发放：    challenge = SHA-256(随机数 || 时间戳)
+   - Client finds:   nonce where SHA-256(challenge || nonce) has
+                     N leading zero bits (difficulty adjustable)
+     客户端求解：    使 SHA-256(challenge || nonce) 前 N 位为零的 nonce
+   - Typical difficulty: ~20 bits (< 1 second on modern hardware,
+     expensive for botnets at scale)
+     典型难度：~20 位（现代硬件不到 1 秒，大规模僵尸网络代价高昂）
+   - Difficulty auto-adjusts based on registration volume
+     难度根据注册量自动调整
+
+3. Anomaly Detection / 异常检测
+   ─────────────────────────────
+   - Registration spike detection (> 3x normal rate in 1 hour)
+     注册高峰检测（1 小时内超过正常速率 3 倍）
+   - Geographic clustering analysis (many registrations from
+     same IP range)
+     地理聚类分析（同一 IP 段大量注册）
+   - Similarity detection for community names/descriptions
+     社区名称/描述相似度检测
+   - Action: increase PoW difficulty, flag for manual review
+     措施：提高 PoW 难度，标记人工审核
+```
+
+### 6.8 Health Check and Monitoring / 健康检查与监控接口
+
+The directory server exposes health check and monitoring endpoints for operational visibility.
+
+目录服务器提供健康检查和监控端点，用于运维可观测性。
+
+```
+Health Endpoints / 健康检查端点：
+
+GET /health
+  - Returns HTTP 200 if the service is running
+    服务运行中返回 HTTP 200
+  - Response body:
+    {
+      "status": "healthy",
+      "version": "1.2.3",
+      "uptime_seconds": 86400
+    }
+
+GET /health/ready
+  - Returns HTTP 200 only when ALL dependencies are ready:
+    仅当所有依赖就绪时返回 HTTP 200：
+    - Database connection pool has available connections
+      数据库连接池有可用连接
+    - Migrations are up to date
+      数据库迁移已是最新
+  - Used by load balancers to determine routing
+    供负载均衡器判断路由
+
+GET /metrics (Prometheus format)
+  - nexuslink_directory_requests_total{method, path, status}
+  - nexuslink_directory_request_duration_seconds{method, path}
+  - nexuslink_directory_db_pool_connections{state="idle|active|waiting"}
+  - nexuslink_directory_kyc_submissions_total{status}
+  - nexuslink_directory_communities_registered_total
+  - nexuslink_directory_search_queries_total
+  - nexuslink_directory_rate_limit_rejections_total
+```
+
 ---
 
 ## 7. Community Server / 社区服务器
@@ -515,6 +865,552 @@ services:
     environment:
       - POSTGRES_DB=nexuslink
       - POSTGRES_PASSWORD_FILE=/run/secrets/db_password
+```
+
+### 7.3 WebSocket Connection Management / WebSocket 连接管理架构
+
+The community server maintains persistent WebSocket connections with all online clients. Connection management is critical for real-time message delivery and presence tracking.
+
+社区服务器与所有在线客户端维护持久的 WebSocket 连接。连接管理对实时消息投递和在线状态追踪至关重要。
+
+```
+WebSocket Architecture / WebSocket 架构：
+
+┌─────────────────────────────────────────────────────────────────┐
+│                    Connection Manager                            │
+│                    连接管理器                                     │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────────┐   │
+│  │  Connection Registry (DashMap<UUID, Vec<DeviceConn>>)    │   │
+│  │  连接注册表                                               │   │
+│  │                                                          │   │
+│  │  UUID-Alice ──► [Device-Phone(ws1), Device-Laptop(ws2)] │   │
+│  │  UUID-Bob   ──► [Device-Phone(ws3)]                     │   │
+│  │  UUID-Carol ──► [Device-Tablet(ws4)]                    │   │
+│  └──────────────────────────────────────────────────────────┘   │
+│                                                                  │
+│  ┌─────────────────┐  ┌──────────────────┐  ┌───────────────┐  │
+│  │ Heartbeat Mgr   │  │ Reconnect Tracker│  │ Backpressure  │  │
+│  │ 心跳管理器       │  │ 重连追踪器        │  │ 背压控制       │  │
+│  └─────────────────┘  └──────────────────┘  └───────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+
+Heartbeat Protocol / 心跳协议：
+  - Server sends PING every 30 seconds
+    服务端每 30 秒发送 PING
+  - Client must respond with PONG within 10 seconds
+    客户端必须在 10 秒内回复 PONG
+  - 2 missed PONGs → connection considered dead, resources released
+    连续 2 次未收到 PONG → 连接视为断开，释放资源
+
+Client Reconnection Strategy / 客户端断线重连策略：
+  - Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s (max)
+    指数退避：1秒、2秒、4秒、8秒、16秒、30秒（最大）
+  - Jitter: random +-25% to prevent thundering herd
+    抖动：随机 +-25% 防止惊群效应
+  - On reconnect: client sends last_received_message_id
+    重连时：客户端发送 last_received_message_id
+  - Server replays missed messages from queue
+    服务端从队列重放未送达消息
+
+Connection Limits / 连接限制：
+  - Max connections per UUID: 8 (devices)
+    每 UUID 最大连接数：8（设备）
+  - Max total connections per server: configurable (default: 50,000)
+    每服务器最大总连接数：可配置（默认：50,000）
+  - Idle timeout (no messages, heartbeat only): 24 hours
+    空闲超时（无消息，仅心跳）：24 小时
+```
+
+### 7.4 Message Routing Engine / 消息路由引擎
+
+The routing engine is responsible for delivering encrypted messages from senders to all intended recipients across multiple devices.
+
+路由引擎负责将加密消息从发送者投递到所有目标接收者的所有设备。
+
+```
+Message Routing Flow / 消息路由流程：
+
+Sender ──► Community Server ──► Recipients
+发送者       社区服务器           接收者
+
+Step 1: Ingest / 消息接收
+─────────────────────────
+  - Sender pushes Envelope via WebSocket
+    发送者通过 WebSocket 推送 Envelope
+  - Server validates: signature, sender membership, timestamp freshness
+    服务端验证：签名、发送者成员资格、时间戳时效性
+
+Step 2: Route / 路由判定
+────────────────────────
+  For 1:1 messages / 一对一消息：
+    - Lookup recipient UUID in connection registry
+      在连接注册表中查找接收者 UUID
+    - Deliver to ALL online devices of recipient
+      投递至接收者的所有在线设备
+
+  For group/channel messages (fan-out) / 群组/频道消息（扇出）：
+    - Lookup all member UUIDs of the channel
+      查找频道的所有成员 UUID
+    - For each member, deliver to all online devices
+      对每个成员，投递至其所有在线设备
+    - Message stored ONCE, reference shared (copy-on-write semantics)
+      消息存储一次，引用共享（写时复制语义）
+
+Step 3: Multi-Device Delivery / 多设备投递
+──────────────────────────────────────────
+  Online devices → immediate WebSocket push
+  在线设备 → 立即 WebSocket 推送
+  Offline devices → enqueue to offline message queue
+  离线设备 → 加入离线消息队列
+
+Step 4: Offline Queue / 离线消息队列
+──────────────────────────────────────
+  - Per-device queue (not per-user) stored in PostgreSQL
+    每设备队列（非每用户）存储在 PostgreSQL 中
+  - Messages expire after configurable TTL (default: 30 days)
+    消息在可配置 TTL 后过期（默认：30 天）
+  - On reconnect: server drains queue in order
+    重连时：服务端按顺序排空队列
+  - Delivery receipt: client ACKs each message
+    投递回执：客户端对每条消息发送 ACK
+  - ACKed messages removed from queue
+    已确认消息从队列移除
+
+Fan-Out Optimization / 扇出优化：
+  - Small groups (< 50 members): inline fan-out in handler task
+    小群组（< 50 成员）：在处理任务中内联扇出
+  - Large channels (>= 50 members): spawn dedicated fan-out task
+    大频道（>= 50 成员）：创建专用扇出任务
+  - Rate limit on group sends: 30 messages / 10 seconds per sender
+    群组发送速率限制：每发送者 10 秒 30 条
+```
+
+### 7.5 Prekey Management Service / 预密钥管理服务
+
+The community server stores and distributes prekey bundles needed for X3DH key agreement. This is a critical service for establishing new encrypted sessions.
+
+社区服务器存储和分发 X3DH 密钥协商所需的预密钥包。这是建立新加密会话的关键服务。
+
+```
+Prekey Lifecycle / 预密钥生命周期：
+
+┌───────────┐    Upload     ┌────────────────┐    Fetch     ┌───────────┐
+│  Client   │──────────────►│   Prekey Store │◄────────────│  Peer     │
+│  客户端    │               │   预密钥存储    │             │  对端      │
+└───────────┘               └────────────────┘             └───────────┘
+
+Storage Schema / 存储结构：
+  prekey_bundles (
+      uuid           VARCHAR(60),        -- owner UUID
+      device_id      INTEGER,            -- device identifier
+      signed_prekey  BYTEA NOT NULL,     -- Signed Prekey (rotated monthly)
+      spk_signature  BYTEA NOT NULL,     -- IK signature over SPK
+      one_time_keys  BYTEA[],           -- array of One-Time Prekeys
+      uploaded_at    TIMESTAMPTZ,
+      PRIMARY KEY (uuid, device_id)
+  )
+
+Distribution Rules / 分发规则：
+  - Each fetch consumes ONE One-Time Prekey (OPK)
+    每次获取消耗一个一次性预密钥（OPK）
+  - OPK is atomically removed after fetch (SELECT + DELETE in transaction)
+    OPK 在获取后原子性删除（事务中 SELECT + DELETE）
+  - If no OPK available, return only Signed Prekey (degraded X3DH)
+    如果无可用 OPK，仅返回签名预密钥（降级 X3DH）
+
+Replenishment Notification / 补充通知：
+  - Server monitors OPK count per device
+    服务端监控每设备 OPK 数量
+  - When count drops below threshold (default: 25):
+    当数量低于阈值（默认：25）时：
+    → Push notification to device: "replenish prekeys"
+      向设备推送通知："补充预密钥"
+    → Device generates and uploads new batch (default: 100 OPKs)
+      设备生成并上传新批次（默认：100 个 OPK）
+
+Expiration Cleanup / 过期清理：
+  - Signed Prekey older than 60 days and superseded → deleted
+    超过 60 天且已被替换的签名预密钥 → 删除
+  - OPKs older than 90 days and unused → deleted
+    超过 90 天且未使用的 OPK → 删除
+  - Cleanup runs as periodic background task (every 6 hours)
+    清理作为定期后台任务运行（每 6 小时）
+```
+
+### 7.6 Channel and Group Permission System / 频道与群组权限系统
+
+The community server implements a Role-Based Access Control (RBAC) model for channels and groups. Each member is assigned a role that determines their permissions.
+
+社区服务器为频道和群组实现了基于角色的访问控制（RBAC）模型。每个成员被分配一个角色，决定其权限。
+
+```
+Role Hierarchy / 角色层级：
+
+  owner         (1 per community)   ── Full control, transfer ownership
+  所有者         （每社区 1 个）         完全控制，可转让所有权
+
+  admin          (unlimited)        ── Manage channels, roles, members
+  管理员          （不限数量）          管理频道、角色、成员
+
+  moderator      (unlimited)        ── Delete messages, mute/kick users
+  版主            （不限数量）          删除消息、禁言/踢出用户
+
+  member         (unlimited)        ── Send messages, read channels
+  成员            （不限数量）          发送消息、阅读频道
+
+  guest          (unlimited)        ── Read-only access to public channels
+  访客            （不限数量）          公开频道只读访问
+
+Permission Matrix / 权限矩阵：
+
+  Action                  owner  admin  moderator  member  guest
+  ──────────────────────  ─────  ─────  ─────────  ──────  ─────
+  Create channel           Y      Y        N         N       N
+  创建频道
+  Delete channel           Y      Y        N         N       N
+  删除频道
+  Edit channel settings    Y      Y        N         N       N
+  编辑频道设置
+  Assign roles             Y      Y        N         N       N
+  分配角色
+  Kick member              Y      Y        Y         N       N
+  踢出成员
+  Mute member              Y      Y        Y         N       N
+  禁言成员
+  Delete others' messages  Y      Y        Y         N       N
+  删除他人消息
+  Send messages            Y      Y        Y         Y       N
+  发送消息
+  Read public channels     Y      Y        Y         Y       Y
+  阅读公开频道
+  Read private channels    Y      Y     (if member) (if member) N
+  阅读私有频道                           （若为成员）（若为成员）
+  Upload media             Y      Y        Y         Y       N
+  上传媒体
+  Transfer ownership       Y      N        N         N       N
+  转让所有权
+
+Channel Types / 频道类型：
+  - public:   visible and readable by all members (including guests)
+    公开：    所有成员可见可读（包括访客）
+  - private:  visible only to explicitly added members
+    私有：    仅对明确添加的成员可见
+  - announce: only admins/moderators can send, all can read
+    公告：    仅管理员/版主可发送，所有人可阅读
+```
+
+### 7.7 Media Upload Pipeline / 媒体上传处理管道
+
+Media files (images, videos, documents) are uploaded through a multi-stage pipeline that handles encryption, storage, and optional post-processing.
+
+媒体文件（图片、视频、文档）通过多阶段管道上传，处理加密、存储和可选的后处理。
+
+```
+Upload Pipeline / 上传管道：
+
+Client                        Community Server                Storage
+客户端                         社区服务器                        存储
+
+  │                                │                              │
+  │  1. Request upload slot        │                              │
+  │  POST /api/v1/media/upload     │                              │
+  │  { filename, size, mime_type } │                              │
+  │───────────────────────────────►│                              │
+  │                                │                              │
+  │  2. Return upload_id +         │                              │
+  │     chunk_size (4 MB)          │                              │
+  │◄───────────────────────────────│                              │
+  │                                │                              │
+  │  3. Client-side encryption:    │                              │
+  │     - Generate random AES-256  │                              │
+  │       key for this file        │                              │
+  │     - Encrypt file with        │                              │
+  │       AES-256-GCM              │                              │
+  │     - Compute SHA-256 digest   │                              │
+  │     客户端加密：                │                              │
+  │     - 生成随机 AES-256 密钥     │                              │
+  │     - 用 AES-256-GCM 加密文件  │                              │
+  │     - 计算 SHA-256 摘要        │                              │
+  │                                │                              │
+  │  4. Upload chunks              │                              │
+  │  PUT /api/v1/media/upload      │                              │
+  │      /{upload_id}/chunk/{n}    │                              │
+  │  (repeat for each chunk)       │                              │
+  │───────────────────────────────►│  5. Write to disk/object    │
+  │                                │     storage (already         │
+  │                                │     encrypted by client)     │
+  │                                │─────────────────────────────►│
+  │                                │                              │
+  │  6. POST /api/v1/media/upload  │                              │
+  │     /{upload_id}/complete      │                              │
+  │  { digest: SHA-256 }           │                              │
+  │───────────────────────────────►│                              │
+  │                                │  7. Verify digest, assemble │
+  │                                │     验证摘要，组装文件        │
+  │                                │                              │
+  │                                │  8. Generate thumbnail       │
+  │                                │     (images only, encrypted) │
+  │                                │     生成缩略图               │
+  │                                │     （仅图片，加密存储）      │
+  │                                │                              │
+  │  9. Return media_url +         │                              │
+  │     thumbnail_url              │                              │
+  │◄───────────────────────────────│                              │
+  │                                │                              │
+  │  10. Include media_url in      │                              │
+  │      encrypted message to      │                              │
+  │      recipient, along with     │                              │
+  │      AES key for decryption    │                              │
+  │      在加密消息中包含 media_url │                              │
+  │      及 AES 密钥供接收者解密    │                              │
+
+Chunk Upload Details / 分片上传详情：
+  - Chunk size: 4 MB (configurable)
+    分片大小：4 MB（可配置）
+  - Concurrent chunk uploads: up to 3 parallel
+    并发分片上传：最多 3 个并行
+  - Resume support: client can retry individual chunks
+    续传支持：客户端可重试单个分片
+  - Upload timeout: 1 hour (incomplete uploads auto-cleaned)
+    上传超时：1 小时（未完成上传自动清理）
+
+Thumbnail Generation / 缩略图生成：
+  - Images: resize to 200x200, JPEG quality 60, then encrypt
+    图片：缩放至 200x200，JPEG 质量 60，然后加密
+  - Thumbnail uses SAME encryption key as original
+    缩略图使用与原文件相同的加密密钥
+  - Videos: no server-side thumbnail (server cannot decrypt)
+    视频：无服务端缩略图（服务端无法解密）
+
+CDN Integration (optional) / CDN 集成（可选）：
+  - Encrypted blobs can be pushed to S3-compatible storage
+    加密文件可推送到 S3 兼容存储
+  - Signed URLs for download (time-limited, 1 hour)
+    下载使用签名 URL（限时 1 小时）
+  - CDN caches encrypted blobs; no privacy risk
+    CDN 缓存加密文件；无隐私风险
+```
+
+### 7.8 Push Notification Architecture / 推送通知架构
+
+Push notifications allow offline clients to be alerted about new messages without maintaining a persistent connection.
+
+推送通知允许离线客户端在没有持久连接的情况下收到新消息提醒。
+
+```
+Push Notification Flow / 推送通知流程：
+
+Community Server                 Push Gateway              Device
+社区服务器                        推送网关                   设备
+
+  │                                │                         │
+  │  1. Message arrives for        │                         │
+  │     offline device             │                         │
+  │     消息到达，目标设备离线       │                         │
+  │                                │                         │
+  │  2. Construct push payload:    │                         │
+  │     构造推送载荷：              │                         │
+  │     {                          │                         │
+  │       "type": "new_message",   │                         │
+  │       "sender_uuid": "nxl:xx", │                         │
+  │       "channel_id": "...",     │                         │
+  │       // NO message content    │                         │
+  │       // 不包含消息内容         │                         │
+  │     }                          │                         │
+  │                                │                         │
+  │  3. Route to appropriate       │                         │
+  │     push service:              │                         │
+  │     路由至对应推送服务：         │                         │
+  │─────────────────────────────►  │                         │
+  │  Android → FCM (Firebase)      │  4. Deliver to device  │
+  │  iOS     → APNs (Apple)        │─────────────────────── ►│
+  │  Fallback → UnifiedPush        │     投递至设备           │
+  │                                │                         │
+  │                                │                         │
+  │                                │         5. Device wakes │
+  │                                │         app, connects   │
+  │                                │         via WebSocket,  │
+  │                                │         fetches messages│
+  │                                │         设备唤醒应用，   │
+  │                                │         建立 WebSocket， │
+  │                                │◄────────fetch 消息      │
+  │                                │                         │
+
+Push Service Integration / 推送服务集成：
+
+  Platform    Service        Token Storage
+  平台        服务            令牌存储
+  ────────    ─────────      ──────────────
+  Android     FCM            push_tokens table
+  iOS         APNs           push_tokens table
+  Self-host   UnifiedPush    push_tokens table (distributor URL)
+  Desktop     WebSocket      (always connected, no push needed)
+  桌面端      WebSocket      （始终连接，无需推送）
+
+Notification Queue / 通知队列：
+  - Notifications batched per device (max 5 per batch)
+    通知按设备批量处理（每批最多 5 条）
+  - Coalescing: multiple messages from same channel → 1 notification
+    合并：同一频道的多条消息 → 1 条通知
+  - Retry on failure: 3 attempts with exponential backoff
+    失败重试：3 次尝试，指数退避
+  - Token invalidation: if push service reports invalid token,
+    remove from push_tokens table
+    令牌失效：如果推送服务报告令牌无效，从 push_tokens 表中移除
+
+Silent Push / 静默推送：
+  - Used for prekey replenishment notifications
+    用于预密钥补充通知
+  - Used for key rotation notifications
+    用于密钥轮换通知
+  - Does not display user-visible notification
+    不显示用户可见通知
+  - Triggers background fetch on the device
+    触发设备后台获取
+```
+
+### 7.9 Server-Side Performance Optimization / 服务端性能优化
+
+The community server employs several strategies to handle high concurrency and throughput efficiently.
+
+社区服务器采用多种策略高效处理高并发和高吞吐场景。
+
+```
+Performance Optimization Stack / 性能优化体系：
+
+1. Connection Multiplexing / 连接复用
+   ─────────────────────────────────────
+   - tokio async runtime with multi-threaded scheduler
+     tokio 异步运行时，多线程调度器
+   - Each WebSocket handled by a lightweight tokio task (not OS thread)
+     每个 WebSocket 由轻量 tokio 任务处理（非 OS 线程）
+   - Cost per connection: ~8 KB memory (stack + buffers)
+     每连接开销：约 8 KB 内存（栈 + 缓冲区）
+   - 50,000 concurrent connections ≈ 400 MB memory
+     50,000 并发连接约占 400 MB 内存
+
+2. Message Batching / 消息批量处理
+   ────────────────────────────────
+   - Incoming messages buffered and flushed to DB in batches
+     传入消息缓冲后批量刷入数据库
+   - Batch size: 50 messages or 100ms elapsed (whichever first)
+     批次大小：50 条消息或 100 毫秒（以先到者为准）
+   - Reduces PostgreSQL round-trips by ~10x under load
+     高负载下减少约 10 倍 PostgreSQL 往返
+   - Fan-out also batched: group sends coalesced before delivery
+     扇出也做批量处理：群组发送合并后再投递
+
+3. Database Query Optimization / 数据库查询优化
+   ────────────────────────────────────────────
+   - Prepared statements cached per connection (sqlx automatic)
+     预处理语句按连接缓存（sqlx 自动）
+   - Indexes on hot paths:
+     热路径索引：
+       - message_queue(recipient_uuid, device_id, created_at)
+       - members(uuid) with INCLUDE (public_key, role)
+       - channels(community_id, channel_type)
+   - Partitioned message_queue by month (for efficient expiration)
+     message_queue 按月分区（高效过期）
+   - VACUUM scheduled during low-traffic hours
+     VACUUM 安排在低流量时段
+
+4. Caching Layer / 缓存层
+   ──────────────────────
+   - In-process LRU cache (moka crate):
+     进程内 LRU 缓存（moka crate）：
+       - Member roles and permissions: TTL 5 minutes
+         成员角色和权限：TTL 5 分钟
+       - Channel metadata: TTL 10 minutes
+         频道元数据：TTL 10 分钟
+       - Prekey bundle existence checks: TTL 1 minute
+         预密钥包存在性检查：TTL 1 分钟
+   - Optional Redis for multi-instance deployments (see Chapter 13)
+     多实例部署可选 Redis（见第 13 章）
+```
+
+### 7.10 Operations and Monitoring / 运维与监控
+
+Comprehensive observability is built into the community server to support production operations.
+
+社区服务器内建全面的可观测性，支持生产环境运维。
+
+```
+Observability Stack / 可观测性体系：
+
+1. Prometheus Metrics Export / Prometheus 指标导出
+   ──────────────────────────────────────────────
+   Endpoint: GET /metrics (Prometheus text format)
+
+   Key Metrics / 关键指标：
+   - nexuslink_ws_connections_active          (gauge)
+     当前活跃 WebSocket 连接数
+   - nexuslink_ws_connections_total           (counter)
+     WebSocket 连接总数
+   - nexuslink_messages_routed_total          (counter, labels: type)
+     路由消息总数
+   - nexuslink_messages_queued_offline        (gauge)
+     离线消息队列深度
+   - nexuslink_message_delivery_duration_seconds (histogram)
+     消息投递延迟
+   - nexuslink_prekey_pool_size               (gauge, labels: uuid)
+     预密钥池大小
+   - nexuslink_media_upload_bytes_total       (counter)
+     媒体上传总字节数
+   - nexuslink_push_notifications_sent_total  (counter, labels: platform, status)
+     推送通知发送总数
+   - nexuslink_db_pool_connections            (gauge, labels: state)
+     数据库连接池状态
+   - nexuslink_db_query_duration_seconds      (histogram, labels: query)
+     数据库查询延迟
+
+2. Structured Logging / 结构化日志
+   ────────────────────────────────
+   Uses the tracing crate ecosystem (tracing + tracing-subscriber)
+   使用 tracing crate 生态系统
+
+   Log format: JSON (for log aggregation systems)
+   日志格式：JSON（供日志聚合系统使用）
+
+   Example output / 示例输出：
+   {
+     "timestamp": "2025-06-15T10:23:45.123Z",
+     "level": "INFO",
+     "target": "nexuslink_community::router",
+     "span": { "request_id": "01H5..." },
+     "fields": {
+       "message": "message routed",
+       "sender": "nxl:8Wj3...",
+       "channel": "general",
+       "recipients": 42,
+       "duration_ms": 3
+     }
+   }
+
+   Log levels / 日志级别：
+     ERROR  → service failures, unrecoverable errors
+              服务故障、不可恢复错误
+     WARN   → degraded operations, rate limit hits
+              降级运行、速率限制触发
+     INFO   → request/response, connection events
+              请求/响应、连接事件
+     DEBUG  → message routing details (disabled in production)
+              消息路由细节（生产环境禁用）
+     TRACE  → protocol-level details (development only)
+              协议级细节（仅开发环境）
+
+3. Automated Backup / 自动备份
+   ───────────────────────────
+   - PostgreSQL: pg_dump daily, WAL archiving for point-in-time recovery
+     PostgreSQL：每日 pg_dump，WAL 归档用于时间点恢复
+   - Media storage: incremental backup to secondary storage
+     媒体存储：增量备份到二级存储
+   - Backup encryption: AES-256 with server-side backup key
+     备份加密：AES-256，服务端备份密钥
+   - Retention: 30 days of daily backups, 12 months of monthly backups
+     保留策略：30 天每日备份，12 个月每月备份
+   - Restore test: automated monthly restore to staging environment
+     恢复测试：每月自动恢复到预发布环境
 ```
 
 ---
@@ -752,6 +1648,713 @@ Device compromised:
 | IP address | Hidden from directory | Visible to community server | Visible to STUN/peer |
 | Group membership | Hidden from directory | Visible to community server | N/A |
 | UUID existence | Known (if KYC'd) | Known to server | Known to peer only |
+
+---
+
+## 12. Server Shared Layer / 服务端共享层
+
+Both the directory server and community server share common infrastructure code. This chapter documents the shared patterns and utilities.
+
+目录服务器和社区服务器共享公共基础设施代码。本章记录共享的模式和工具。
+
+### 12.1 Error Handling System / 错误处理体系
+
+A unified error system ensures consistent error responses across all server APIs and simplifies debugging.
+
+统一的错误体系确保所有服务端 API 返回一致的错误响应，并简化调试。
+
+```rust
+// Unified error type / 统一错误类型
+#[derive(Debug, thiserror::Error)]
+pub enum AppError {
+    // 4xx Client Errors / 客户端错误
+    #[error("bad request: {message}")]
+    BadRequest { message: String, code: ErrorCode },
+
+    #[error("unauthorized")]
+    Unauthorized { code: ErrorCode },
+
+    #[error("forbidden: {message}")]
+    Forbidden { message: String, code: ErrorCode },
+
+    #[error("not found: {resource}")]
+    NotFound { resource: String, code: ErrorCode },
+
+    #[error("rate limited")]
+    RateLimited { retry_after_secs: u32, code: ErrorCode },
+
+    #[error("conflict: {message}")]
+    Conflict { message: String, code: ErrorCode },
+
+    // 5xx Server Errors / 服务端错误
+    #[error("internal server error")]
+    Internal { source: anyhow::Error, code: ErrorCode },
+
+    #[error("database error")]
+    Database { source: sqlx::Error, code: ErrorCode },
+
+    #[error("service unavailable")]
+    Unavailable { message: String, code: ErrorCode },
+}
+```
+
+```
+Error Code Specification / 错误码规范：
+
+  Format: DOMAIN_CATEGORY_DETAIL
+  格式：  域_类别_详情
+
+  Domain prefixes / 域前缀：
+    DIR_  → Directory server errors   目录服务器错误
+    COM_  → Community server errors   社区服务器错误
+    AUTH_ → Authentication errors     认证错误
+    KYC_  → KYC-related errors        KYC 相关错误
+
+  Examples / 示例：
+    AUTH_TOKEN_EXPIRED        → Authentication token has expired
+                                 认证令牌已过期
+    AUTH_SIGNATURE_INVALID    → Ed25519 signature verification failed
+                                 Ed25519 签名验证失败
+    DIR_COMMUNITY_NOT_FOUND   → Community ID does not exist
+                                 社区 ID 不存在
+    DIR_KYC_REQUIRED          → KYC verification required for this action
+                                 此操作需要 KYC 验证
+    COM_CHANNEL_FORBIDDEN     → User lacks permission for this channel
+                                 用户缺少此频道的权限
+    COM_PREKEY_EXHAUSTED      → No one-time prekeys available
+                                 无可用一次性预密钥
+    COM_UPLOAD_TOO_LARGE      → File exceeds size limit
+                                 文件超出大小限制
+```
+
+```json
+// Client-friendly error response / 客户端友好错误响应
+// HTTP 403 Forbidden
+{
+  "error": {
+    "code": "COM_CHANNEL_FORBIDDEN",
+    "message": "You do not have permission to send messages in this channel.",
+    "details": {
+      "channel_id": "01H5...",
+      "required_role": "member",
+      "current_role": "guest"
+    },
+    "request_id": "01H5...",
+    "timestamp": "2025-06-15T10:23:45Z"
+  }
+}
+```
+
+### 12.2 Configuration Management / 配置管理
+
+Servers are configured through a layered system: TOML config files, environment variable overrides, and limited runtime hot-reloading.
+
+服务端通过分层系统配置：TOML 配置文件、环境变量覆盖，以及有限的运行时热更新。
+
+```toml
+# nexuslink-server.toml (example configuration)
+# nexuslink-server.toml（配置示例）
+
+[server]
+bind_address = "0.0.0.0"
+port = 443
+tls_cert_path = "/certs/fullchain.pem"
+tls_key_path = "/certs/privkey.pem"
+max_connections = 50000
+
+[database]
+url = "postgresql://nexuslink:password@localhost:5432/nexuslink"
+max_connections = 20
+min_connections = 5
+
+[rate_limit]
+general_rpm = 60           # requests per minute
+kyc_rpm = 5
+search_rpm = 30
+
+[push]
+fcm_credentials_path = "/secrets/fcm.json"
+apns_cert_path = "/secrets/apns.p8"
+apns_team_id = "XXXXXXXXXX"
+
+[media]
+storage_path = "/data/media"
+max_file_size = "100MB"
+chunk_size = "4MB"
+
+[backup]
+enabled = true
+schedule = "0 3 * * *"     # daily at 03:00 UTC
+retention_days = 30
+
+[logging]
+level = "info"
+format = "json"
+```
+
+```
+Configuration Layer Priority (highest → lowest) /
+配置层优先级（最高 → 最低）：
+
+  1. Environment variables (NEXUSLINK_SERVER_PORT=8443)
+     环境变量
+     Convention: NEXUSLINK_ prefix + section_key in SCREAMING_SNAKE_CASE
+     约定：NEXUSLINK_ 前缀 + section_key 大写蛇形
+
+  2. TOML config file (nexuslink-server.toml)
+     TOML 配置文件
+
+  3. Compiled-in defaults
+     编译时默认值
+
+Runtime Hot-Reload (partial) / 运行时热更新（部分）：
+  The server watches the config file for changes (via notify crate).
+  服务端监控配置文件变化（通过 notify crate）。
+
+  Hot-reloadable settings / 可热更新配置：
+    - rate_limit.*          (rate limiting thresholds)
+      速率限制阈值
+    - logging.level         (log verbosity)
+      日志详细级别
+    - media.max_file_size   (upload size limit)
+      上传大小限制
+
+  Requires restart / 需重启：
+    - server.bind_address, server.port   (network binding)
+      网络绑定
+    - database.*                          (connection pool)
+      数据库连接池
+    - server.tls_*                        (TLS certificates)
+      TLS 证书
+    - push.*                              (push service credentials)
+      推送服务凭证
+```
+
+### 12.3 Database Migration / 数据库迁移
+
+Database schema evolution is managed through SQLx's built-in migration system, ensuring reproducible and versioned schema changes.
+
+数据库模式演进通过 SQLx 内置迁移系统管理，确保可复现和版本化的模式变更。
+
+```
+Migration Directory Structure / 迁移目录结构：
+
+  migrations/
+  ├── 20250101000000_initial_schema.sql
+  ├── 20250115000000_add_push_tokens.sql
+  ├── 20250201000000_add_channel_types.sql
+  ├── 20250215000000_add_message_queue_partitioning.sql
+  └── 20250301000000_add_prekey_expiry_index.sql
+
+Migration Workflow / 迁移工作流：
+
+  Development / 开发：
+    $ sqlx migrate add <description>
+    → Creates timestamped .sql file in migrations/
+      在 migrations/ 中创建带时间戳的 .sql 文件
+
+  Deployment / 部署：
+    $ sqlx migrate run
+    → Applies all pending migrations in order
+      按顺序应用所有待执行迁移
+    → Records applied migrations in _sqlx_migrations table
+      在 _sqlx_migrations 表中记录已应用迁移
+
+  Verification / 验证：
+    $ sqlx migrate info
+    → Shows status of all migrations (applied / pending)
+      显示所有迁移的状态（已应用/待执行）
+
+  Server Startup / 服务启动：
+    On boot, the server automatically runs pending migrations
+    before accepting connections.
+    启动时，服务端在接受连接前自动运行待执行迁移。
+
+Migration Rules / 迁移规则：
+  - Migrations are forward-only (no automatic rollback)
+    迁移仅向前（无自动回滚）
+  - Rollback by creating a new migration that reverses changes
+    回滚通过创建新迁移来反转变更
+  - All migrations run within a transaction
+    所有迁移在事务中运行
+  - Breaking changes require two-phase migration:
+    破坏性变更需要两阶段迁移：
+      Phase 1: Add new column/table (backward compatible)
+      阶段 1：添加新列/表（向后兼容）
+      Phase 2: Remove old column/table (after code deployed)
+      阶段 2：移除旧列/表（代码部署后）
+```
+
+### 12.4 Common Type Definitions / 公共类型定义
+
+Shared types used across both servers to ensure consistency in API contracts and data handling.
+
+两个服务端共享的类型，确保 API 契约和数据处理的一致性。
+
+```rust
+// UUID type / UUID 类型
+// NexusLink UUIDs use the "nxl:" prefix format
+// NexusLink UUID 使用 "nxl:" 前缀格式
+pub struct NxlUuid(String);
+
+impl NxlUuid {
+    pub fn from_public_key(pk: &Ed25519PublicKey) -> Self {
+        let hash = sha256(pk.as_bytes());
+        let encoded = bs58::encode(&hash[..32]).into_string();
+        Self(format!("nxl:{}", encoded))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+// Timestamp / 时间戳
+// All timestamps are UTC, stored as milliseconds since Unix epoch
+// 所有时间戳为 UTC，存储为 Unix 纪元后的毫秒数
+pub type Timestamp = i64;
+
+pub fn now_ms() -> Timestamp {
+    chrono::Utc::now().timestamp_millis()
+}
+
+// Pagination parameters / 分页参数
+// Cursor-based pagination for all list endpoints
+// 所有列表端点使用游标分页
+#[derive(Deserialize)]
+pub struct PaginationParams {
+    /// Maximum number of items to return (1-100, default 20)
+    /// 最大返回条数（1-100，默认 20）
+    pub limit: Option<u32>,
+
+    /// Opaque cursor from previous response
+    /// 上次响应中的不透明游标
+    pub cursor: Option<String>,
+}
+
+impl PaginationParams {
+    pub fn effective_limit(&self) -> u32 {
+        self.limit.unwrap_or(20).min(100).max(1)
+    }
+}
+
+// API response wrapper / API 响应包装
+// All successful responses follow this structure
+// 所有成功响应遵循此结构
+#[derive(Serialize)]
+pub struct ApiResponse<T: Serialize> {
+    pub data: T,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pagination: Option<PaginationInfo>,
+}
+
+#[derive(Serialize)]
+pub struct PaginationInfo {
+    /// Cursor to fetch the next page
+    /// 获取下一页的游标
+    pub next_cursor: Option<String>,
+
+    /// Whether more items exist beyond this page
+    /// 是否还有更多条目
+    pub has_more: bool,
+}
+
+// Usage example / 使用示例：
+// GET /api/v1/community/search?q=gaming&limit=20&cursor=abc123
+//
+// Response:
+// {
+//   "data": [
+//     { "id": "...", "name": "...", ... },
+//     { "id": "...", "name": "...", ... }
+//   ],
+//   "pagination": {
+//     "next_cursor": "def456",
+//     "has_more": true
+//   }
+// }
+```
+
+---
+
+## 13. Server Deployment Architecture / 服务端部署架构
+
+This chapter covers deployment patterns for both small self-hosted communities and larger-scale production deployments.
+
+本章涵盖从小型自托管社区到大规模生产部署的部署模式。
+
+### 13.1 Single-Node Deployment / 单机部署方案
+
+The simplest deployment: everything runs on one machine using Docker Compose. Suitable for small to medium communities (up to ~5,000 members).
+
+最简单的部署方案：所有服务在一台机器上通过 Docker Compose 运行。适用于中小型社区（最多约 5,000 成员）。
+
+```yaml
+# docker-compose.yml (single-node deployment)
+# docker-compose.yml（单机部署）
+version: '3.8'
+
+services:
+  nexuslink-community:
+    image: nexuslink/community-server:latest
+    ports:
+      - "443:443"
+    volumes:
+      - ./config:/etc/nexuslink
+      - media_data:/data/media
+      - certs:/certs
+    environment:
+      - NEXUSLINK_DATABASE_URL=postgresql://nexuslink:${DB_PASSWORD}@postgres:5432/nexuslink
+      - NEXUSLINK_SERVER_BIND_ADDRESS=0.0.0.0
+      - NEXUSLINK_SERVER_PORT=443
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  postgres:
+    image: postgres:16-alpine
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    environment:
+      - POSTGRES_DB=nexuslink
+      - POSTGRES_USER=nexuslink
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexuslink"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  # Optional: Redis for caching and rate limiting
+  # 可选：用于缓存和速率限制的 Redis
+  redis:
+    image: redis:7-alpine
+    command: redis-server --maxmemory 128mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 192M
+
+volumes:
+  pg_data:
+  media_data:
+  redis_data:
+  certs:
+```
+
+```
+Single-Node Architecture / 单机架构：
+
+┌─────────────────────────────────────────────────────┐
+│                   Host Machine                       │
+│                   宿主机                              │
+│                                                      │
+│  ┌────────────────────────────────────────────────┐  │
+│  │             Docker Compose                     │  │
+│  │                                                │  │
+│  │  ┌──────────────────┐  ┌────────────────────┐ │  │
+│  │  │  Community Server│  │  PostgreSQL 16      │ │  │
+│  │  │  社区服务器       │──│  数据库              │ │  │
+│  │  │  Port: 443       │  │  Port: 5432         │ │  │
+│  │  └──────────────────┘  └────────────────────┘ │  │
+│  │           │                                    │  │
+│  │           │            ┌────────────────────┐ │  │
+│  │           └────────────│  Redis (optional)  │ │  │
+│  │                        │  Port: 6379        │ │  │
+│  │                        └────────────────────┘ │  │
+│  └────────────────────────────────────────────────┘  │
+│                                                      │
+│  ┌────────────────────────────────────────────────┐  │
+│  │  /data/media    (encrypted media files)        │  │
+│  │  /data/pgdata   (PostgreSQL data)              │  │
+│  │  /data/certs    (TLS certificates)             │  │
+│  └────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────┘
+```
+
+### 13.2 Cluster Deployment / 集群部署方案
+
+For larger communities or high-availability requirements: multiple community server instances behind a load balancer, with shared PostgreSQL and Redis for cross-instance coordination.
+
+适用于大型社区或高可用性需求：多个社区服务器实例位于负载均衡器之后，共享 PostgreSQL 和 Redis 用于跨实例协调。
+
+```
+Cluster Architecture / 集群架构：
+
+                    ┌──────────────────────┐
+                    │   Load Balancer      │
+                    │   负载均衡器          │
+                    │   (HAProxy / nginx)  │
+                    │                      │
+                    │   TLS termination    │
+                    │   TLS 终止           │
+                    │   (or passthrough)   │
+                    └──────────┬───────────┘
+                               │
+              ┌────────────────┼────────────────┐
+              │                │                │
+              ▼                ▼                ▼
+     ┌────────────────┐ ┌──────────────┐ ┌──────────────┐
+     │ Community Srv 1│ │ Comm. Srv 2  │ │ Comm. Srv 3  │
+     │ 社区服务器 1    │ │ 社区服务器 2  │ │ 社区服务器 3  │
+     └───────┬────────┘ └──────┬───────┘ └──────┬───────┘
+             │                 │                │
+             └────────┬────────┘                │
+                      │                         │
+              ┌───────▼───────┐                 │
+              │    Redis      │◄────────────────┘
+              │  (pub/sub +   │
+              │   cache)      │
+              │  发布/订阅+缓存│
+              └───────┬───────┘
+                      │
+              ┌───────▼───────┐
+              │  PostgreSQL   │
+              │  (primary +   │
+              │   replicas)   │
+              │  主库 + 副本   │
+              └───────────────┘
+
+Cross-Instance Message Routing / 跨实例消息路由：
+  Problem: Sender on Instance 1, Recipient on Instance 3
+  问题：发送者在实例 1，接收者在实例 3
+
+  Solution: Redis pub/sub / 解决方案：Redis 发布/订阅
+    1. Instance 1 receives message from sender
+       实例 1 从发送者接收消息
+    2. Instance 1 checks local connection registry
+       实例 1 检查本地连接注册表
+    3. Recipient NOT found locally → publish to Redis channel
+       接收者不在本地 → 发布到 Redis 频道
+       PUBLISH nexuslink:route:{recipient_uuid} <envelope>
+    4. Instance 3 (subscribed) receives and delivers to recipient
+       实例 3（已订阅）接收并投递给接收者
+
+Load Balancer Configuration / 负载均衡器配置：
+  - WebSocket: sticky sessions (by client UUID cookie)
+    WebSocket：粘性会话（按客户端 UUID cookie）
+  - Health check: GET /health/ready every 10 seconds
+    健康检查：每 10 秒 GET /health/ready
+  - Draining: 30-second graceful shutdown on instance removal
+    排空：实例移除时 30 秒优雅关闭
+  - Algorithm: least-connections (best for WebSocket workloads)
+    算法：最少连接数（最适合 WebSocket 负载）
+```
+
+### 13.3 TLS Certificate Management / TLS 证书管理
+
+TLS is mandatory for all client-server communication. Certificate provisioning is automated through the ACME protocol (Let's Encrypt).
+
+所有客户端-服务端通信强制使用 TLS。证书配置通过 ACME 协议（Let's Encrypt）自动化。
+
+```
+TLS Certificate Lifecycle / TLS 证书生命周期：
+
+  Initial Provisioning / 初始配置：
+  ──────────────────────────────────
+  Option A: Built-in ACME client (recommended for single-node)
+  选项 A：内置 ACME 客户端（单机推荐）
+    - Server uses rustls-acme to automatically obtain certificates
+      服务端使用 rustls-acme 自动获取证书
+    - HTTP-01 challenge: server temporarily listens on port 80
+      HTTP-01 挑战：服务端临时监听 80 端口
+    - Certificate stored in /certs/ directory
+      证书存储在 /certs/ 目录
+
+  Option B: External certificate manager (recommended for clusters)
+  选项 B：外部证书管理器（集群推荐）
+    - certbot / acme.sh running as separate service
+      certbot / acme.sh 作为独立服务运行
+    - Load balancer handles TLS termination
+      负载均衡器处理 TLS 终止
+    - Certificates shared via mounted volume or secret manager
+      证书通过挂载卷或密钥管理器共享
+
+  Auto-Renewal / 自动续期：
+  ──────────────────────────
+  - Certificates checked daily for approaching expiry
+    每日检查证书是否临近过期
+  - Renewal triggered 30 days before expiry
+    过期前 30 天触发续期
+  - New certificate hot-swapped without restart (rustls supports this)
+    新证书热替换无需重启（rustls 支持）
+  - Failure alerts: notification sent if renewal fails 3 times
+    失败告警：续期连续失败 3 次时发送通知
+
+  TLS Configuration / TLS 配置：
+  ─────────────────────────────
+  - Minimum version: TLS 1.2 (TLS 1.3 preferred)
+    最低版本：TLS 1.2（优先 TLS 1.3）
+  - Cipher suites (TLS 1.3):
+    TLS_AES_256_GCM_SHA384
+    TLS_AES_128_GCM_SHA256
+    TLS_CHACHA20_POLY1305_SHA256
+  - HSTS header: max-age=63072000; includeSubDomains
+  - OCSP stapling: enabled
+    OCSP 装订：启用
+```
+
+### 13.4 Data Backup and Recovery / 数据备份与恢复策略
+
+A comprehensive backup strategy protects against data loss from hardware failures, software bugs, or operational errors.
+
+全面的备份策略防止因硬件故障、软件缺陷或运维失误导致的数据丢失。
+
+```
+Backup Strategy / 备份策略：
+
+1. PostgreSQL Backup / PostgreSQL 备份
+   ────────────────────────────────────
+   Daily full backup / 每日全量备份：
+     - pg_dump with --format=custom (compressed)
+       pg_dump 使用 --format=custom（压缩）
+     - Scheduled at 03:00 UTC (low-traffic window)
+       安排在 UTC 03:00（低流量窗口）
+     - Encrypted with AES-256 before storage
+       存储前用 AES-256 加密
+
+   Continuous WAL archiving / 持续 WAL 归档：
+     - PostgreSQL WAL files archived to backup storage
+       PostgreSQL WAL 文件归档到备份存储
+     - Enables point-in-time recovery (PITR)
+       支持时间点恢复（PITR）
+     - RPO (Recovery Point Objective): < 5 minutes
+       RPO（恢复点目标）：< 5 分钟
+
+2. Media Backup / 媒体备份
+   ────────────────────────
+   - Incremental sync to secondary storage (rsync or rclone)
+     增量同步到二级存储（rsync 或 rclone）
+   - Media files already encrypted by clients; no additional
+     encryption needed for backup
+     媒体文件已由客户端加密；备份无需额外加密
+   - Frequency: every 6 hours
+     频率：每 6 小时
+
+3. Configuration Backup / 配置备份
+   ────────────────────────────────
+   - Config files and secrets backed up separately
+     配置文件和密钥独立备份
+   - Version-controlled in private git repository (recommended)
+     建议在私有 git 仓库中版本控制
+   - Secrets encrypted with age or sops
+     密钥用 age 或 sops 加密
+
+Retention Policy / 保留策略：
+  - Daily backups: retained for 30 days
+    每日备份：保留 30 天
+  - Weekly backups: retained for 3 months
+    每周备份：保留 3 个月
+  - Monthly backups: retained for 12 months
+    每月备份：保留 12 个月
+
+Recovery Procedures / 恢复流程：
+  Scenario 1: Database corruption / 数据库损坏
+    1. Stop community server
+       停止社区服务器
+    2. Restore latest pg_dump
+       恢复最新 pg_dump
+    3. Replay WAL to desired point in time
+       重放 WAL 到目标时间点
+    4. Verify data integrity
+       验证数据完整性
+    5. Restart community server
+       重启社区服务器
+    RTO (Recovery Time Objective): < 30 minutes
+    RTO（恢复时间目标）：< 30 分钟
+
+  Scenario 2: Full server loss / 服务器完全丢失
+    1. Provision new server
+       配置新服务器
+    2. Deploy via Docker Compose
+       通过 Docker Compose 部署
+    3. Restore config from backup
+       从备份恢复配置
+    4. Restore PostgreSQL from backup
+       从备份恢复 PostgreSQL
+    5. Restore media from backup storage
+       从备份存储恢复媒体
+    6. Update DNS records
+       更新 DNS 记录
+    RTO: < 2 hours
+```
+
+### 13.5 Hardware Recommendations / 硬件推荐配置
+
+Hardware requirements vary significantly based on community size. Below are tested recommendations.
+
+硬件需求因社区规模而异。以下是经过测试的推荐配置。
+
+```
+Small Community (< 500 members, < 50 concurrent) /
+小型社区（< 500 成员，< 50 并发）：
+─────────────────────────────────────────────────
+  CPU:     2 cores (ARM or x86_64)
+  RAM:     2 GB
+  Storage: 20 GB SSD (OS + DB + media)
+  Network: 10 Mbps
+  Cost:    ~$5-10/month VPS
+  Examples: Raspberry Pi 4, entry-level VPS
+
+  Can run on / 可运行于：
+    - Raspberry Pi 4 (4 GB model)
+    - Hetzner Cloud CX22
+    - DigitalOcean Basic Droplet (2 GB)
+    - Home server / NAS
+
+Medium Community (500-5,000 members, 50-500 concurrent) /
+中型社区（500-5,000 成员，50-500 并发）：
+───────────────────────────────────────────────────────
+  CPU:     4 cores
+  RAM:     8 GB
+  Storage: 100 GB SSD (OS + DB), 500 GB HDD/object storage (media)
+  Network: 100 Mbps
+  Cost:    ~$20-40/month VPS
+
+Large Community (5,000-50,000 members, 500-5,000 concurrent) /
+大型社区（5,000-50,000 成员，500-5,000 并发）：
+─────────────────────────────────────────────────────────────
+  CPU:     8+ cores
+  RAM:     32 GB
+  Storage: 500 GB NVMe SSD (DB), separate object storage (media)
+  Network: 1 Gbps
+  Cost:    ~$100-200/month dedicated server or multi-VPS
+
+  Recommended: cluster deployment (see Section 13.2)
+  推荐：集群部署（见第 13.2 节）
+    - 2-3 community server instances (4 cores, 8 GB each)
+      2-3 个社区服务器实例（各 4 核 8 GB）
+    - 1 PostgreSQL primary + 1 replica (8 cores, 16 GB each)
+      1 个 PostgreSQL 主库 + 1 个副本（各 8 核 16 GB）
+    - 1 Redis instance (2 cores, 4 GB)
+      1 个 Redis 实例（2 核 4 GB）
+    - Load balancer (2 cores, 2 GB)
+      负载均衡器（2 核 2 GB）
+
+Key Scaling Bottlenecks / 关键扩展瓶颈：
+  1. WebSocket connections: limited by RAM (~8 KB per connection)
+     WebSocket 连接：受 RAM 限制（每连接约 8 KB）
+  2. Message fan-out: CPU-bound for large channels
+     消息扇出：大频道时受 CPU 限制
+  3. Media storage: disk I/O and capacity
+     媒体存储：磁盘 I/O 和容量
+  4. Database queries: connection pool and query complexity
+     数据库查询：连接池和查询复杂度
+```
 
 ---
 
