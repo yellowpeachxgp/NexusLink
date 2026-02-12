@@ -93,6 +93,26 @@ Every aspect of NexusLink is designed around one principle: **don't decide for t
 - Community servers are **privacy shields** -- metadata never flows to the official server
 - Zero-knowledge proof ready for future KYC (prove identity without revealing details)
 
+### Bot System
+
+NexusLink supports a Discord-like bot ecosystem, redesigned for E2E encryption:
+
+**Bot = Headless Client** — Each Bot has its own Ed25519 key pair and UUID, connecting to Community Servers using the exact same protocol as regular users. Bots must participate in E2E key exchange to read messages — no "God Mode."
+
+**Three Bot Types:**
+
+| Type | Runtime Location | Typical Use Cases |
+|------|-----------------|-------------------|
+| Community Bot | Community admin's server | Auto-moderation, welcome messages, channel management, scheduled announcements |
+| Personal Bot | User's own device or VPS | Message forwarding, auto-reply, account hosting |
+| Third-party Bot | Third-party developer hosted | Translation, RSS feeds, games, polls, AI assistants |
+
+**Privacy Guarantees:**
+- Bots always display a visible Bot badge in channels — no invisible surveillance
+- Key rotation triggered when a Bot is removed, ensuring Forward Secrecy
+- Community admins control Bot channel access and permissions via RBAC
+- Bot SDK built on Rust Core — developers never implement cryptography themselves
+
 ### Cross-Platform
 - iOS, Android, Windows, macOS, Linux
 - Flutter UI + Rust core via FFI
@@ -941,6 +961,7 @@ What NexusLink learned from Matrix:
 | Open source | No (commercial, closed) | Yes (AGPLv3) |
 | Self-hosting | Impossible | Core feature |
 | Community features | Extremely rich (channels, voice, threads, roles, bots) | Planned, incremental rollout |
+| Bot ecosystem | Bots run on plaintext; full server-side access to all messages | **E2E encrypted bots** -- Bots are headless clients with their own key pairs; must participate in key exchange; no God Mode |
 | Business model | Nitro subscription, server boosts | Open-source free, optional managed hosting |
 | Privacy | Low (all data visible to Discord, subject to subpoena) | High (E2E + community sovereignty) |
 
@@ -985,6 +1006,7 @@ What NexusLink learned from Matrix:
 | P2P direct | **Mode C** | Experimental | No | No | No | Onion routing | No |
 | Metadata isolation | **Architectural** | No | Partial | No | No | Yes | No |
 | Community features | Planned | Mature | Basic | Mature | **Richest** | Limited | Fragmented |
+| Bot/Extensibility | **E2E encrypted bots** | Bridges + bots | No | Bots (plaintext) | Bots (plaintext) | No | XEP extensions |
 | Trust levels | **3 levels** | 1 level | 1 level | 1 level | 1 level | 1 level | 1 level |
 | Identity security | **Tiered (software/HW/FIDO2)** | Password | PIN | Phone number | Password | Software key | Password |
 | Protocol maturity | New (in dev) | Mature (10y) | Mature (10y) | Mature | Mature | Moderate (5y) | Mature (26y) |

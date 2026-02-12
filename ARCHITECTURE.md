@@ -20,6 +20,7 @@
 11. [Security Analysis / 安全性分析](#11-security-analysis--安全性分析)
 12. [Server Shared Layer / 服务端共享层](#12-server-shared-layer--服务端共享层)
 13. [Server Deployment Architecture / 服务端部署架构](#13-server-deployment-architecture--服务端部署架构)
+14. [Bot System / 机器人系统](#14-bot-system--机器人系统)
 
 ---
 
@@ -2925,6 +2926,192 @@ Key Scaling Bottlenecks / 关键扩展瓶颈：
   4. Database queries: connection pool and query complexity
      数据库查询：连接池和查询复杂度
 ```
+
+---
+
+## 14. Bot System / 机器人系统
+
+### 14.0 Design Philosophy / 设计理念
+
+In Discord, bots run server-side with full access to plaintext messages — essentially "God Mode." In NexusLink, a Bot is a **Headless Client**: it has its own Ed25519 key pair and UUID, connects to a Community Server using the same WebSocket protocol as regular clients, and must participate in E2E key exchange to read any message.
+
+在 Discord 中，Bot 运行在服务端，拥有对明文消息的完全访问权——本质上是「上帝模式」。在 NexusLink 中，Bot 是一个**无头客户端（Headless Client）**：它拥有自己的 Ed25519 密钥对和 UUID，使用与普通客户端相同的 WebSocket 协议连接社区服务器，并且必须参与 E2E 密钥交换才能读取任何消息。
+
+**Core principles / 核心原则:**
+
+- **Bot is a cryptographic participant, not an observer / Bot 是加密参与者，不是旁观者** — A Bot must be invited into an E2E session and receive session keys to read messages. / Bot 必须被邀请进入 E2E 会话并获得会话密钥才能读取消息。
+- **Bot presence is always visible / Bot 存在始终可见** — When a Bot is in a channel, all members see a Bot badge. No invisible surveillance. / 当 Bot 在频道中时，所有成员都能看到 Bot 标识。不存在隐形监听。
+- **Permissions controlled by community RBAC / 权限由社区 RBAC 控制** — Admins decide which channels a Bot can join and what actions it can perform. / 管理员决定 Bot 能进哪些频道、能执行什么操作。
+- **Bot SDK built on Rust Core / Bot SDK 基于 Rust Core** — Reuses existing crypto and protocol layers. Bot developers never implement cryptography themselves. / 复用现有的加密和协议层。Bot 开发者无需自己实现密码学。
+
+### 14.1 Bot Types / 机器人类型
+
+| Type / 类型 | Runtime Location / 运行位置 | Typical Use Cases / 典型用途 |
+|---|---|---|
+| **Community Bot / 社区机器人** | Community admin's server / 社区管理员的服务器 | Auto-moderation, welcome messages, channel management, scheduled announcements / 自动审核、欢迎新人、频道管理、定时公告 |
+| **Personal Bot / 个人机器人** | User's own device or VPS / 用户自己的设备或 VPS | Message forwarding, auto-reply, account hosting, multi-device sync proxy / 消息转发、自动回复、账户托管、多设备同步代理 |
+| **Third-party Bot / 第三方机器人** | Third-party developer hosted / 第三方开发者托管 | Translation, RSS feeds, games, polls, AI assistants / 翻译、RSS 推送、游戏、投票、AI 助手 |
+
+
+### 14.2 Architecture / 架构
+
+```
+Bot Architecture / Bot 架构
+
+┌─────────────────────────────────────────────────────┐
+│  Bot Process (Headless) / 机器人进程（无头）           │
+│                                                       │
+│  ┌──────────────────┐  ┌──────────────────────────┐  │
+│  │  Bot Logic        │  │ NexusLink Bot SDK (Rust) │  │
+│  │  机器人逻辑        │  │                          │  │
+│  │                    │  │  • Crypto (E2E)          │  │
+│  │  - Command handler │◄►│  • WebSocket client      │  │
+│  │  - Event listener  │  │  • Prekey management     │  │
+│  │  - Response sender │  │  • Message encode/decode │  │
+│  │  - State storage   │  │  • Permission checker    │  │
+│  └──────────────────┘  └────────────┬─────────────┘  │
+└─────────────────────────────────────┼─────────────────┘
+                                      │ WSS (same protocol as regular client)
+                                      │ 与普通客户端相同的协议
+                                      ▼
+                        ┌──────────────────────────┐
+                        │   Community Server        │
+                        │   社区服务器               │
+                        │                           │
+                        │   Bot = just another      │
+                        │   member with a UUID      │
+                        │   and a Bot badge         │
+                        │                           │
+                        │   Bot = 只是另一个有       │
+                        │   UUID 和 Bot 标识的成员   │
+                        └──────────────────────────┘
+```
+
+**Key point / 关键点:** The Community Server does not distinguish between a Bot and a human client at the protocol level. Both use the same WebSocket connection, the same message format, and the same E2E encryption. The only difference is a `bot: true` flag in the member profile, which triggers the visible Bot badge in other clients' UI.
+
+**关键点：** 社区服务器在协议层面不区分 Bot 和人类客户端。两者使用相同的 WebSocket 连接、相同的消息格式和相同的 E2E 加密。唯一的区别是成员资料中的 `bot: true` 标志，它会在其他客户端的 UI 中触发可见的 Bot 标识。
+
+
+### 14.3 Bot Lifecycle / 机器人生命周期
+
+```
+Bot Lifecycle / Bot 生命周期
+
+  Developer                    Community Admin              Community Server
+  开发者                        社区管理员                     社区服务器
+
+     │                              │                            │
+     │  1. Create Bot               │                            │
+     │     Generate key pair         │                            │
+     │     生成密钥对                 │                            │
+     │                              │                            │
+     │  2. Register Bot ────────────►│                            │
+     │     Submit UUID + public key  │                            │
+     │     提交 UUID + 公钥          │                            │
+     │                              │                            │
+     │                              │  3. Review & Approve       │
+     │                              │     审核并批准              │
+     │                              │                            │
+     │                              │  4. Assign permissions ───►│
+     │                              │     Channels + RBAC roles  │
+     │                              │     分配频道 + RBAC 角色    │
+     │                              │                            │
+     │  5. Connect ─────────────────────────────────────────────►│
+     │     Upload prekeys            │                            │
+     │     上传预密钥                 │                            │
+     │                              │                            │
+     │  6. Active ◄─────────────────────────────────────────────►│
+     │     Receive events, send responses                        │
+     │     接收事件，发送响应                                      │
+     │                              │                            │
+     │                              │  7. Revoke (anytime)       │
+     │                              │     随时可撤销              │
+     │                              │     → Key rotation triggered│
+     │                              │       触发密钥轮换          │
+```
+
+**On removal / 移除时:** When a Bot is removed from a channel or community, a key rotation is triggered for all remaining participants. This ensures Forward Secrecy — the removed Bot cannot decrypt any future messages even if it retained the old session keys.
+
+**移除时：** 当 Bot 从频道或社区中移除时，会为所有剩余参与者触发密钥轮换。这确保了前向保密——被移除的 Bot 即使保留了旧的会话密钥也无法解密任何未来的消息。
+
+
+### 14.4 Privacy Comparison with Discord / 与 Discord 的隐私对比
+
+| Aspect / 方面 | Discord | NexusLink |
+|---|---|---|
+| Bot access to messages / Bot 对消息的访问 | All messages in permitted channels (plaintext) / 允许频道中的所有消息（明文） | Only channels where Bot participates in E2E key exchange / 仅 Bot 参与 E2E 密钥交换的频道 |
+| Invisible bots / 隐形 Bot | Possible with certain permissions / 某些权限下可能 | Impossible by design — Bot badge always visible / 设计上不可能——Bot 标识始终可见 |
+| Server-side access / 服务端访问 | Bot runs server-side with API token / Bot 使用 API token 在服务端运行 | Bot is a client — server never sees plaintext / Bot 是客户端——服务器永远看不到明文 |
+| Removal impact / 移除影响 | Bot loses API access / Bot 失去 API 访问 | Key rotation ensures Forward Secrecy / 密钥轮换确保前向保密 |
+| Data retention / 数据留存 | Bot can store all historical messages / Bot 可存储所有历史消息 | Bot only has messages from its active participation period / Bot 仅拥有其活跃参与期间的消息 |
+
+
+### 14.5 Bot SDK Overview / Bot SDK 概览
+
+The Bot SDK is a Rust crate (`nexuslink-bot-sdk`) that wraps the core library and provides a developer-friendly API:
+
+Bot SDK 是一个 Rust crate（`nexuslink-bot-sdk`），封装核心库并提供开发者友好的 API：
+
+```rust
+// Conceptual API — not final implementation
+// 概念性 API——非最终实现
+
+use nexuslink_bot_sdk::{Bot, Event, Context};
+
+#[tokio::main]
+async fn main() {
+    let bot = Bot::builder()
+        .key_path("bot_keys.enc")       // Encrypted key storage / 加密密钥存储
+        .server("wss://community.example.com")
+        .build()
+        .await
+        .unwrap();
+
+    bot.on_event(|event: Event, ctx: Context| async move {
+        match event {
+            Event::Message(msg) => {
+                if msg.content.starts_with("/hello") {
+                    ctx.reply("Hello from Bot!").await?;
+                }
+            }
+            Event::MemberJoin(member) => {
+                ctx.send(format!("Welcome, {}!", member.display_name)).await?;
+            }
+            _ => {}
+        }
+        Ok(())
+    });
+
+    bot.run().await;
+}
+```
+
+
+**SDK responsibilities / SDK 职责:**
+
+| Layer / 层 | Handled by SDK / SDK 处理 | Developer implements / 开发者实现 |
+|---|---|---|
+| Key generation & storage / 密钥生成与存储 | ✓ | |
+| E2E encryption & decryption / E2E 加解密 | ✓ | |
+| WebSocket connection & reconnection / WebSocket 连接与重连 | ✓ | |
+| Prekey upload & rotation / 预密钥上传与轮换 | ✓ | |
+| Message serialization (Protobuf) / 消息序列化 | ✓ | |
+| Permission checking / 权限检查 | ✓ | |
+| Command parsing / 命令解析 | | ✓ |
+| Business logic / 业务逻辑 | | ✓ |
+| State management / 状态管理 | | ✓ |
+| External API calls / 外部 API 调用 | | ✓ |
+
+### 14.6 Use Case Examples / 使用场景示例
+
+| Scenario / 场景 | Bot Type / Bot 类型 | How it works / 工作方式 |
+|---|---|---|
+| Auto-reply when offline / 离线时自动回复 | Personal Bot / 个人机器人 | Hosts user's account on a VPS, responds with preset messages / 在 VPS 上托管用户账户，使用预设消息回复 |
+| Community translation / 社区翻译 | Community Bot / 社区机器人 | Listens to messages, calls translation API, replies with translated text / 监听消息，调用翻译 API，回复翻译文本 |
+| Poll system / 投票系统 | Community Bot / 社区机器人 | Responds to `/vote` commands, tracks votes, announces results / 响应 `/vote` 命令，统计投票，公布结果 |
+| AI chat assistant / AI 聊天助手 | Third-party Bot / 第三方机器人 | Forwards decrypted messages to LLM API, returns AI response / 将解密消息转发到 LLM API，返回 AI 响应 |
+| RSS feed / RSS 推送 | Community Bot / 社区机器人 | Periodically fetches RSS feeds, posts new items to designated channel / 定期获取 RSS 源，将新条目发布到指定频道 |
+| Moderation / 内容审核 | Community Bot / 社区机器人 | Scans messages against rules, warns or mutes violators / 根据规则扫描消息，警告或禁言违规者 |
 
 ---
 
