@@ -1,5 +1,5 @@
 <p align="center">
-  <h1 align="center">NexusLink</h1>
+  <h1 align="center">Univona</h1>
   <p align="center">
     <strong>Hybrid Messaging Platform -- Where Centralized Meets Decentralized</strong>
   </p>
@@ -13,9 +13,13 @@
 
 ---
 
-## What is NexusLink?
+## What is Univona?
 
-NexusLink is an open-source, cross-platform instant messaging application that uniquely **bridges centralized and decentralized communication** within a single app. Users choose how they connect -- through an official directory server, a self-hosted community server, or direct peer-to-peer -- without sacrificing usability or security.
+**Univona** = **Uni** (unity) + **Vona** (from Latin *vox*, meaning voice) = **The Unified Voice**
+
+In an era where communication is fragmented, privacy is eroded, and users have lost their right to choose, Univona is a new voice -- returning the choice of connection mode, security level, and data ownership back to the user. **Your social life, your voice, your choice.**
+
+Univona is an open-source, cross-platform instant messaging application that uniquely **bridges centralized and decentralized communication** within a single app. Users choose how they connect -- through an official directory server, a self-hosted community server, or direct peer-to-peer -- without sacrificing usability or security.
 
 **No phone number. No email. No registration.** Your identity is a cryptographic key pair generated on your device's secure hardware. You own your identity.
 
@@ -28,11 +32,11 @@ NexusLink is an open-source, cross-platform instant messaging application that u
 | Single point of failure and surveillance | Fragmented user experience |
 | No choice in who hosts your data | Technical barrier for average users |
 
-**NexusLink fills the gap** -- offering the community features of centralized platforms with the privacy and sovereignty of decentralized ones, letting each user decide their own trust level.
+**Univona fills the gap** -- offering the community features of centralized platforms with the privacy and sovereignty of decentralized ones, letting each user decide their own trust level.
 
 ### Design Philosophy: Put the Choice in Users' Hands
 
-Every aspect of NexusLink is designed around one principle: **don't decide for the user**.
+Every aspect of Univona is designed around one principle: **don't decide for the user**.
 
 | Choice | Your Options |
 |--------|-------------|
@@ -60,7 +64,7 @@ Every aspect of NexusLink is designed around one principle: **don't decide for t
 
 ```
 +-------------------------------------------------------------+
-|                    NexusLink Client                          |
+|                    Univona Client                          |
 |                                                              |
 |  [A] Official Server     [B] Community Server    [C] P2P    |
 |  - Real-name verified    - Self-hosted            - Direct   |
@@ -95,7 +99,7 @@ Every aspect of NexusLink is designed around one principle: **don't decide for t
 
 ### Bot System
 
-NexusLink supports a Discord-like bot ecosystem, redesigned for E2E encryption:
+Univona supports a Discord-like bot ecosystem, redesigned for E2E encryption:
 
 **Bot = Headless Client** — Each Bot has its own Ed25519 key pair and UUID, connecting to Community Servers using the exact same protocol as regular users. Bots must participate in E2E key exchange to read messages — no "God Mode."
 
@@ -160,11 +164,11 @@ For detailed architecture documentation, see [ARCHITECTURE.md](./docs/en/archite
 
 ## Server Development
 
-This section provides a comprehensive guide for developers who want to understand, extend, or deploy the NexusLink server components.
+This section provides a comprehensive guide for developers who want to understand, extend, or deploy the Univona server components.
 
 ### Server Architecture Overview
 
-NexusLink uses a **shared codebase** model for its server infrastructure. Both the **Community Server** and the **Directory Server** are built from the same Rust workspace under `server/`, sharing common libraries for configuration, error handling, type definitions, and utilities via the `server/shared/` crate. This design ensures consistency across server types and reduces code duplication.
+Univona uses a **shared codebase** model for its server infrastructure. Both the **Community Server** and the **Directory Server** are built from the same Rust workspace under `server/`, sharing common libraries for configuration, error handling, type definitions, and utilities via the `server/shared/` crate. This design ensures consistency across server types and reduces code duplication.
 
 ```
 server/
@@ -177,7 +181,7 @@ The two servers serve fundamentally different roles and are deployed independent
 
 ### Community Server
 
-The Community Server is the primary workhorse of the NexusLink ecosystem. It is designed to be **self-hosted by anyone** -- an individual, an organization, or a community operator. Each Community Server instance operates autonomously, storing its own data and enforcing its own policies.
+The Community Server is the primary workhorse of the Univona ecosystem. It is designed to be **self-hosted by anyone** -- an individual, an organization, or a community operator. Each Community Server instance operates autonomously, storing its own data and enforcing its own policies.
 
 #### Responsibilities
 
@@ -287,7 +291,7 @@ All message content stored in the `messages` table is the E2E-encrypted cipherte
 
 ### Directory Server
 
-The Directory Server is the **official, centrally operated** component of the NexusLink network. Its scope is deliberately minimal: it functions as a **phonebook** for discovering communities, not as a message relay or storage backend.
+The Directory Server is the **official, centrally operated** component of the Univona network. Its scope is deliberately minimal: it functions as a **phonebook** for discovering communities, not as a message relay or storage backend.
 
 #### Responsibilities
 
@@ -377,26 +381,26 @@ The recommended deployment method for production environments:
 
 ```bash
 # Community Server
-docker pull nexuslink/community-server:latest
+docker pull univona/community-server:latest
 docker run -d \
-  --name nexuslink-community \
+  --name univona-community \
   -p 443:443 \
   -p 8443:8443 \
   -v /path/to/data:/data \
-  -v /path/to/config.toml:/etc/nexuslink/config.toml \
-  -e NEXUSLINK_DOMAIN=your.community.domain.com \
-  -e DATABASE_URL=postgres://user:pass@db:5432/nexuslink \
-  nexuslink/community-server:latest
+  -v /path/to/config.toml:/etc/univona/config.toml \
+  -e UNIVONA_DOMAIN=your.community.domain.com \
+  -e DATABASE_URL=postgres://user:pass@db:5432/univona \
+  univona/community-server:latest
 
 # Directory Server (official deployment only)
-docker pull nexuslink/directory-server:latest
+docker pull univona/directory-server:latest
 docker run -d \
-  --name nexuslink-directory \
+  --name univona-directory \
   -p 443:443 \
   -v /path/to/data:/data \
-  -v /path/to/config.toml:/etc/nexuslink/config.toml \
-  -e DATABASE_URL=postgres://user:pass@db:5432/nexuslink_dir \
-  nexuslink/directory-server:latest
+  -v /path/to/config.toml:/etc/univona/config.toml \
+  -e DATABASE_URL=postgres://user:pass@db:5432/univona_dir \
+  univona/directory-server:latest
 ```
 
 A `docker-compose.yml` is provided for deploying a Community Server alongside PostgreSQL and Redis:
@@ -410,17 +414,17 @@ docker compose up -d
 
 ```bash
 # Clone the repository
-git clone https://github.com/yellowpeachxgp/NexusLink.git
-cd NexusLink
+git clone https://github.com/yellowpeachxgp/Univona.git
+cd Univona
 
 # Build Community Server
-cargo build --release -p nexuslink-community-server
+cargo build --release -p univona-community-server
 
 # Build Directory Server
-cargo build --release -p nexuslink-directory-server
+cargo build --release -p univona-directory-server
 
 # Run with a configuration file
-./target/release/nexuslink-community-server --config config.toml
+./target/release/univona-community-server --config config.toml
 ```
 
 #### Configuration
@@ -435,7 +439,7 @@ ws_port = 8443
 domain = "your.community.domain.com"
 
 [database]
-url = "postgres://user:password@localhost:5432/nexuslink"
+url = "postgres://user:password@localhost:5432/univona"
 max_connections = 50
 min_connections = 5
 
@@ -449,24 +453,24 @@ local_path = "/data/files"
 max_file_size = "50MB"
 
 [tls]
-cert_path = "/etc/nexuslink/cert.pem"
-key_path = "/etc/nexuslink/key.pem"
+cert_path = "/etc/univona/cert.pem"
+key_path = "/etc/univona/key.pem"
 
 [rate_limit]
 requests_per_second = 100
 burst_size = 200
 
 [push]
-apns_key_path = "/etc/nexuslink/apns.p8"
-fcm_credentials_path = "/etc/nexuslink/fcm.json"
+apns_key_path = "/etc/univona/apns.p8"
+fcm_credentials_path = "/etc/univona/fcm.json"
 
 [directory]
 enabled = false                   # Set to true to register with the Directory Server
-directory_url = "https://directory.nexuslink.org"
-server_public_key_path = "/etc/nexuslink/server_key.pub"
+directory_url = "https://directory.univona.org"
+server_public_key_path = "/etc/univona/server_key.pub"
 ```
 
-Environment variables override TOML values. All configuration keys map to environment variables with the `NEXUSLINK_` prefix (e.g., `NEXUSLINK_DATABASE_URL`).
+Environment variables override TOML values. All configuration keys map to environment variables with the `UNIVONA_` prefix (e.g., `UNIVONA_DATABASE_URL`).
 
 ### Server Tech Stack
 
@@ -516,15 +520,15 @@ The server exposes a `/metrics` endpoint in Prometheus exposition format. Key me
 
 | Metric | Type | Description |
 |--------|------|-------------|
-| `nexuslink_http_requests_total` | Counter | Total HTTP requests by method, path, and status code |
-| `nexuslink_http_request_duration_seconds` | Histogram | Request latency distribution |
-| `nexuslink_ws_connections_active` | Gauge | Currently active WebSocket connections |
-| `nexuslink_ws_messages_total` | Counter | Total WebSocket messages sent and received |
-| `nexuslink_db_query_duration_seconds` | Histogram | Database query latency |
-| `nexuslink_db_pool_connections_active` | Gauge | Active database pool connections |
-| `nexuslink_messages_queued` | Gauge | Messages waiting in the offline delivery queue |
-| `nexuslink_file_uploads_total` | Counter | Total file uploads |
-| `nexuslink_file_storage_bytes` | Gauge | Total file storage usage in bytes |
+| `univona_http_requests_total` | Counter | Total HTTP requests by method, path, and status code |
+| `univona_http_request_duration_seconds` | Histogram | Request latency distribution |
+| `univona_ws_connections_active` | Gauge | Currently active WebSocket connections |
+| `univona_ws_messages_total` | Counter | Total WebSocket messages sent and received |
+| `univona_db_query_duration_seconds` | Histogram | Database query latency |
+| `univona_db_pool_connections_active` | Gauge | Active database pool connections |
+| `univona_messages_queued` | Gauge | Messages waiting in the offline delivery queue |
+| `univona_file_uploads_total` | Counter | Total file uploads |
+| `univona_file_storage_bytes` | Gauge | Total file storage usage in bytes |
 
 #### Logging
 
@@ -532,7 +536,7 @@ Structured JSON logging is used in production. Log levels are configurable per m
 
 ```bash
 # Example: info-level for most modules, debug for the chat module
-RUST_LOG="info,nexuslink_community::chat=debug" ./nexuslink-community-server
+RUST_LOG="info,univona_community::chat=debug" ./univona-community-server
 ```
 
 All log entries include request IDs, user IDs (when authenticated), and span context for distributed tracing compatibility.
@@ -573,7 +577,7 @@ All log entries include request IDs, user IDs (when authenticated), and span con
 ## Project Structure
 
 ```
-NexusLink/
+Univona/
 |-- client/                          # Client applications
 |   |-- flutter/                     # Flutter UI (cross-platform)
 |   |   |-- lib/
@@ -660,7 +664,7 @@ NexusLink/
 
 ## Quick Start
 
-> **Note:** NexusLink is in early development. The following instructions will be fully functional once Phase 1 is complete.
+> **Note:** Univona is in early development. The following instructions will be fully functional once Phase 1 is complete.
 
 ### Prerequisites
 
@@ -674,14 +678,14 @@ NexusLink/
 
 ```bash
 # Clone the repository
-git clone https://github.com/yellowpeachxgp/NexusLink.git
-cd NexusLink
+git clone https://github.com/yellowpeachxgp/Univona.git
+cd Univona
 
 # Build the Rust core library
-cargo build --release -p nexuslink-core
+cargo build --release -p univona-core
 
 # Generate FFI bindings
-cargo run --release -p nexuslink-codegen
+cargo run --release -p univona-codegen
 
 # Run the Flutter client
 cd client/flutter
@@ -693,7 +697,7 @@ To run client tests:
 
 ```bash
 # Rust core unit and integration tests
-cargo test -p nexuslink-core
+cargo test -p univona-core
 
 # Flutter widget tests
 cd client/flutter
@@ -704,16 +708,16 @@ flutter test
 
 ```bash
 # Clone the repository
-git clone https://github.com/yellowpeachxgp/NexusLink.git
-cd NexusLink
+git clone https://github.com/yellowpeachxgp/Univona.git
+cd Univona
 
 # Start a local PostgreSQL instance (if not already running)
 # Option A: Using Docker
-docker run -d --name nexuslink-pg \
+docker run -d --name univona-pg \
   -p 5432:5432 \
-  -e POSTGRES_USER=nexuslink \
+  -e POSTGRES_USER=univona \
   -e POSTGRES_PASSWORD=dev_password \
-  -e POSTGRES_DB=nexuslink_dev \
+  -e POSTGRES_DB=univona_dev \
   postgres:15
 
 # Option B: Use docker-compose for the full stack
@@ -722,25 +726,25 @@ docker compose up -d
 cd ../..
 
 # Run database migrations
-DATABASE_URL="postgres://nexuslink:dev_password@localhost:5432/nexuslink_dev" \
-  cargo run -p nexuslink-community-server -- migrate
+DATABASE_URL="postgres://univona:dev_password@localhost:5432/univona_dev" \
+  cargo run -p univona-community-server -- migrate
 
 # Build and run the Community Server in development mode
-cargo run -p nexuslink-community-server -- --config server/community/config.dev.toml
+cargo run -p univona-community-server -- --config server/community/config.dev.toml
 
 # Build and run the Directory Server in development mode
-cargo run -p nexuslink-directory-server -- --config server/directory/config.dev.toml
+cargo run -p univona-directory-server -- --config server/directory/config.dev.toml
 ```
 
 To run server tests:
 
 ```bash
 # All server tests (requires a running PostgreSQL instance)
-DATABASE_URL="postgres://nexuslink:dev_password@localhost:5432/nexuslink_test" \
-  cargo test -p nexuslink-community-server -p nexuslink-directory-server -p nexuslink-shared
+DATABASE_URL="postgres://univona:dev_password@localhost:5432/univona_test" \
+  cargo test -p univona-community-server -p univona-directory-server -p univona-shared
 
 # Run with logging enabled for debugging
-RUST_LOG=debug DATABASE_URL="..." cargo test -p nexuslink-community-server -- --nocapture
+RUST_LOG=debug DATABASE_URL="..." cargo test -p univona-community-server -- --nocapture
 ```
 
 ---
@@ -765,36 +769,36 @@ See [ROADMAP.md](./ROADMAP.md) for the full development plan.
 
 ### Product Positioning
 
-NexusLink's core philosophy is **user choice**: instead of deciding the balance between privacy and convenience for users, let them decide for themselves.
+Univona's core philosophy is **user choice**: instead of deciding the balance between privacy and convenience for users, let them decide for themselves.
 
 ```
 Market Positioning Matrix:
 
                   High Privacy
                        │
-          Session      │   NexusLink (Mode C / P2P)
-            Briar      │   NexusLink (Mode B / Community)
+          Session      │   Univona (Mode C / P2P)
+            Briar      │   Univona (Mode B / Community)
                        │
   Decentralized ───────┼────────── Centralized
                        │
-           XMPP        │   NexusLink (Mode A / Official)
+           XMPP        │   Univona (Mode A / Official)
                        │   Signal
                        │   Telegram    Discord
                   Low Privacy
 
-NexusLink is not a single point on this grid -- it's a sliding scale.
+Univona is not a single point on this grid -- it's a sliding scale.
 Users choose their own position within one app.
 ```
 
-**One-line positioning**: NexusLink gives users the *choice* of their privacy level -- with Signal's encryption strength, Matrix's self-hosting capability, and Discord's community experience, without forcing you to pick just one.
+**One-line positioning**: Univona gives users the *choice* of their privacy level -- with Signal's encryption strength, Matrix's self-hosting capability, and Discord's community experience, without forcing you to pick just one.
 
-### Deep Dive: NexusLink vs Matrix
+### Deep Dive: Univona vs Matrix
 
-Matrix is the closest existing project to NexusLink's vision. Both support self-hosting and pursue openness and decentralization. But they differ fundamentally at the architectural level:
+Matrix is the closest existing project to Univona's vision. Both support self-hosting and pursue openness and decentralization. But they differ fundamentally at the architectural level:
 
 #### Design Philosophy
 
-| Dimension | Matrix | NexusLink |
+| Dimension | Matrix | Univona |
 |-----------|--------|-----------|
 | Core idea | Open federation -- any server can talk to any server | Hierarchical isolation -- servers don't communicate directly; discovery via directory |
 | Data model | DAG (Directed Acyclic Graph) -- room state fully replicated across all participating servers | Message routing -- messages only exist on the sender's server, never replicated across servers |
@@ -810,7 +814,7 @@ Matrix Identity:
   ├── Migrating servers = changing identity (must rebuild all trust)
   └── Server admin can reset password = server controls identity
 
-NexusLink Identity:
+Univona Identity:
   nxl:8Wj3kR9... (Ed25519 public key hash)
   ├── Generated locally in device secure hardware
   ├── Zero registration -- no server dependency
@@ -820,7 +824,7 @@ NexusLink Identity:
 
 This means:
 - If a Matrix homeserver shuts down, your identity disappears; you must rebuild all contacts
-- NexusLink identities belong to users permanently; if a server shuts down, just join another community
+- Univona identities belong to users permanently; if a server shuts down, just join another community
 
 #### Federation vs Hierarchical Isolation
 
@@ -842,7 +846,7 @@ Matrix Federation Model:
   - Message timestamps, membership changes, presence -- all visible
   - This is Matrix's known "metadata leakage" problem
 
-NexusLink Hierarchical Model:
+Univona Hierarchical Model:
 
   Directory Server (official)
   │
@@ -865,7 +869,7 @@ NexusLink Hierarchical Model:
 
 This is the core concern of Matrix users and privacy researchers.
 
-| Metadata Type | Matrix Server Visibility | NexusLink Community Server | NexusLink Directory Server |
+| Metadata Type | Matrix Server Visibility | Univona Community Server | Univona Directory Server |
 |--------------|-------------------------|---------------------------|---------------------------|
 | Message content | Not visible (if E2E enabled) | Not visible (E2E mandatory) | Not visible |
 | Who talks to whom | **All participating homeservers** | Only that community server | **Not visible** |
@@ -874,11 +878,11 @@ This is the core concern of Matrix users and privacy researchers.
 | Group member lists | **All participating homeservers** | Only that community server | **Not visible** |
 | User IP address | User's homeserver | Only that community server | Only when accessing directory |
 
-**Key difference**: In Matrix, a room spanning N servers exposes metadata to N administrators. In NexusLink, no matter how many communities a user joins, each community's metadata is only visible to that community's admin and never aggregated.
+**Key difference**: In Matrix, a room spanning N servers exposes metadata to N administrators. In Univona, no matter how many communities a user joins, each community's metadata is only visible to that community's admin and never aggregated.
 
 #### Encryption Strategy
 
-| Dimension | Matrix | NexusLink |
+| Dimension | Matrix | Univona |
 |-----------|--------|-----------|
 | 1:1 encryption | Olm (Double Ratchet variant), optional | Signal Protocol (X3DH + Double Ratchet), **mandatory** |
 | Group encryption | Megolm (Sender Key variant), optional | Sender Keys + Signal, **mandatory** |
@@ -888,7 +892,7 @@ This is the core concern of Matrix users and privacy researchers.
 
 #### P2P Capability
 
-| Dimension | Matrix | NexusLink |
+| Dimension | Matrix | Univona |
 |-----------|--------|-----------|
 | Status | Experimental (Pinecone project) | First-class citizen (Mode C) |
 | Implementation | Custom Pinecone overlay network | libp2p + WebRTC (mature industrial stack) |
@@ -899,36 +903,36 @@ This is the core concern of Matrix users and privacy researchers.
 
 #### Server Resources
 
-| Scale | Matrix (Synapse) | Matrix (Conduit) | NexusLink |
+| Scale | Matrix (Synapse) | Matrix (Conduit) | Univona |
 |-------|-----------------|------------------|-----------|
 | Small (< 500 users) | 2-4 GB RAM, 2 cores | 512 MB RAM, 1 core | 2 GB RAM, 2 cores (incl. DB) |
 | Medium (~5000 users) | 8-16 GB RAM, 4 cores | 2-4 GB RAM, 2 cores | 8 GB RAM, 4 cores (incl. DB) |
 | Startup time | Synapse: Python, slow | Conduit: Rust, fast | Rust (Axum), fast |
 | Maintenance | High (state resolution, federation sync, media store) | Moderate | Low (no federation sync, no DAG) |
 
-**Why NexusLink is lighter**: No DAG state resolution, no cross-server state sync, no federation queries. Each community server handles only its own members and messages.
+**Why Univona is lighter**: No DAG state resolution, no cross-server state sync, no federation queries. Each community server handles only its own members and messages.
 
 #### Where Matrix Still Leads (honest assessment)
 
 Matrix remains ahead in these areas:
 
-- **Maturity**: Matrix development started in 2014 (10+ years); NexusLink is just beginning
+- **Maturity**: Matrix development started in 2014 (10+ years); Univona is just beginning
 - **Ecosystem**: Matrix has Element, FluffyChat, SchildiChat, and many bridges (Telegram, Discord, IRC, Slack)
 - **Specification completeness**: Matrix Spec is a formal document refined over years
-- **Open federation flexibility**: Matrix enables cross-organization collaboration; NexusLink's isolation model requires P2P or shared communities for cross-community messaging
+- **Open federation flexibility**: Matrix enables cross-organization collaboration; Univona's isolation model requires P2P or shared communities for cross-community messaging
 - **Government/enterprise adoption**: French government (Tchap), German military (BwMessenger), and others have deployed Matrix
 
-What NexusLink learned from Matrix:
+What Univona learned from Matrix:
 - Cross-signing approach for multi-device verification
 - E2E encryption practices for group scenarios
-- Federation metadata leakage lessons (the direct reason NexusLink chose hierarchical isolation)
+- Federation metadata leakage lessons (the direct reason Univona chose hierarchical isolation)
 - Importance of community governance and open specifications
 
 ### Comparison with Other Solutions
 
-#### NexusLink vs Signal
+#### Univona vs Signal
 
-| Dimension | Signal | NexusLink |
+| Dimension | Signal | Univona |
 |-----------|--------|-----------|
 | Architecture | Purely centralized (Signal servers) | Hybrid (three modes) |
 | Registration | Phone number required | Zero registration |
@@ -937,12 +941,12 @@ What NexusLink learned from Matrix:
 | Encryption protocol | Signal Protocol | Signal Protocol (same) |
 | Anonymity | Low (phone number required) | High (zero registration, P2P mode) |
 
-**Borrowed**: NexusLink directly adopts Signal Protocol as its encryption foundation -- the most widely audited E2E protocol available.
-**Differentiation**: NexusLink provides self-hosting and community features that Signal cannot offer.
+**Borrowed**: Univona directly adopts Signal Protocol as its encryption foundation -- the most widely audited E2E protocol available.
+**Differentiation**: Univona provides self-hosting and community features that Signal cannot offer.
 
-#### NexusLink vs Telegram
+#### Univona vs Telegram
 
-| Dimension | Telegram | NexusLink |
+| Dimension | Telegram | Univona |
 |-----------|----------|-----------|
 | Encryption | E2E only in "secret chats" (MTProto); regular chats visible to server | **All messages E2E mandatory** |
 | Server | Closed-source, fully controlled by Telegram Inc. | Fully open-source (AGPLv3), self-hostable |
@@ -951,11 +955,11 @@ What NexusLink learned from Matrix:
 | Registration | Phone number required | Zero registration |
 
 **Borrowed**: Telegram's channel/supergroup/bot ecosystem is a key reference for community features.
-**Differentiation**: Telegram's fundamental issue is that encryption is not default; most users' messages are visible to the server. NexusLink has no unencrypted option.
+**Differentiation**: Telegram's fundamental issue is that encryption is not default; most users' messages are visible to the server. Univona has no unencrypted option.
 
-#### NexusLink vs Discord
+#### Univona vs Discord
 
-| Dimension | Discord | NexusLink |
+| Dimension | Discord | Univona |
 |-----------|---------|-----------|
 | Encryption | **No E2E encryption** | Mandatory E2E |
 | Open source | No (commercial, closed) | Yes (AGPLv3) |
@@ -965,12 +969,12 @@ What NexusLink learned from Matrix:
 | Business model | Nitro subscription, server boosts | Open-source free, optional managed hosting |
 | Privacy | Low (all data visible to Discord, subject to subpoena) | High (E2E + community sovereignty) |
 
-**Borrowed**: Discord's community experience (channel categories, roles, permissions, voice channels) is the UX benchmark for NexusLink communities.
-**Differentiation**: Discord has zero E2E encryption; all messages are fully visible to Discord Inc. NexusLink community admins cannot see message content either.
+**Borrowed**: Discord's community experience (channel categories, roles, permissions, voice channels) is the UX benchmark for Univona communities.
+**Differentiation**: Discord has zero E2E encryption; all messages are fully visible to Discord Inc. Univona community admins cannot see message content either.
 
-#### NexusLink vs Session
+#### Univona vs Session
 
-| Dimension | Session | NexusLink |
+| Dimension | Session | Univona |
 |-----------|---------|-----------|
 | Architecture | Purely decentralized (Oxen network / onion routing) | Hybrid (centralized + decentralized + P2P) |
 | Registration | None (key generation) | None (secure hardware key) |
@@ -980,11 +984,11 @@ What NexusLink learned from Matrix:
 | Identity security | Software key | **Tiered (software→HW→FIDO2)** |
 
 **Borrowed**: Session proved that "no registration" identity models are viable.
-**Differentiation**: Session's pure decentralization makes it slow and feature-limited. NexusLink lets users choose community mode when speed and features matter.
+**Differentiation**: Session's pure decentralization makes it slow and feature-limited. Univona lets users choose community mode when speed and features matter.
 
-#### NexusLink vs XMPP (Jabber)
+#### Univona vs XMPP (Jabber)
 
-| Dimension | XMPP | NexusLink |
+| Dimension | XMPP | Univona |
 |-----------|------|-----------|
 | Protocol age | 1999 (26 years) | 2025 (brand new) |
 | Federation | Yes (open federation, similar to Matrix) | Hierarchical isolation (not federated) |
@@ -993,11 +997,11 @@ What NexusLink learned from Matrix:
 | Modern features | Depends on XEP extensions, inconsistent | Natively integrated (voice, files, push) |
 
 **Borrowed**: XMPP proves open protocols can have longevity, but also exposes fragmentation risks.
-**Differentiation**: NexusLink learned from XMPP's fragmentation -- provide a unified official client and clear protocol spec, avoiding "protocol supports it but no client implements it."
+**Differentiation**: Univona learned from XMPP's fragmentation -- provide a unified official client and clear protocol spec, avoiding "protocol supports it but no client implements it."
 
 ### Comparison Overview Table
 
-| Feature | NexusLink | Matrix | Signal | Telegram | Discord | Session | XMPP |
+| Feature | Univona | Matrix | Signal | Telegram | Discord | Session | XMPP |
 |---------|-----------|--------|--------|----------|---------|---------|------|
 | Open source | Full (AGPLv3) | Full (Apache) | Client+Server | Client only | No | Full (GPL) | Open protocol |
 | No registration | **Yes** | No | No | No | No | **Yes** | No |
@@ -1011,7 +1015,7 @@ What NexusLink learned from Matrix:
 | Identity security | **Tiered (software/HW/FIDO2)** | Password | PIN | Phone number | Password | Software key | Password |
 | Protocol maturity | New (in dev) | Mature (10y) | Mature (10y) | Mature | Mature | Moderate (5y) | Mature (26y) |
 
-### What NexusLink Borrows from Each Project
+### What Univona Borrows from Each Project
 
 ```
 Reference Map:
@@ -1058,7 +1062,7 @@ Reference Map:
 | Device loss | Mnemonic recovery phrase restores identity on new device |
 | Man-in-the-middle | Public key verification via QR code / safety numbers |
 
-### What NexusLink Does NOT Protect Against
+### What Univona Does NOT Protect Against
 - A compromised community server can see communication metadata (who talks to whom, when) -- this is a conscious trade-off for usability
 - If a user's device is compromised (malware, root access), the attacker has access to decrypted messages
 - P2P mode requires STUN servers for NAT traversal; these servers can see IP addresses (but not message content)
@@ -1081,24 +1085,24 @@ We welcome contributions in all areas:
 
 ## License
 
-NexusLink is licensed under the [GNU Affero General Public License v3.0](./LICENSE).
+Univona is licensed under the [GNU Affero General Public License v3.0](./LICENSE).
 
 This means:
-- You can freely use, modify, and distribute NexusLink
+- You can freely use, modify, and distribute Univona
 - Any modifications must also be open-sourced under AGPLv3
 - If you run a modified version as a network service, you must make the source code available to users
-- This ensures NexusLink remains open and free for everyone
+- This ensures Univona remains open and free for everyone
 
 ---
 
 ## Acknowledgments
 
-NexusLink builds upon the research and work of many open-source projects and protocols. We respect each referenced project and have clearly documented what NexusLink learned from them and where it diverges:
+Univona builds upon the research and work of many open-source projects and protocols. We respect each referenced project and have clearly documented what Univona learned from them and where it diverges:
 
-- [Signal Protocol](https://signal.org/docs/) -- NexusLink's encryption foundation (X3DH + Double Ratchet), adopted directly rather than reinvented
-- [Matrix](https://matrix.org/) -- Pioneer of federated messaging; NexusLink drew inspiration from Matrix's cross-signing for multi-device verification and learned from its metadata leakage problems to design hierarchical isolation
-- [Session](https://getsession.org/) -- Validated the viability of zero-registration identity models; NexusLink adopted a similar mnemonic recovery mechanism
-- [Discord](https://discord.com/) -- UX benchmark for community features (channels, roles, permissions); NexusLink's community features reference Discord's experience
+- [Signal Protocol](https://signal.org/docs/) -- Univona's encryption foundation (X3DH + Double Ratchet), adopted directly rather than reinvented
+- [Matrix](https://matrix.org/) -- Pioneer of federated messaging; Univona drew inspiration from Matrix's cross-signing for multi-device verification and learned from its metadata leakage problems to design hierarchical isolation
+- [Session](https://getsession.org/) -- Validated the viability of zero-registration identity models; Univona adopted a similar mnemonic recovery mechanism
+- [Discord](https://discord.com/) -- UX benchmark for community features (channels, roles, permissions); Univona's community features reference Discord's experience
 - [Telegram](https://telegram.org/) -- Reference for channel, supergroup, and bot ecosystems
 - [XMPP](https://xmpp.org/) -- Proof that open protocols have long-term viability, and also a cautionary tale about fragmentation
 - [libp2p](https://libp2p.io/) -- Peer-to-peer networking stack

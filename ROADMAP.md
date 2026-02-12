@@ -1,7 +1,7 @@
-# NexusLink Development Roadmap / 开发路线图
+# Univona Development Roadmap / 开发路线图
 
-> This document outlines the phased development plan for NexusLink.
-> 本文档概述 NexusLink 的分阶段开发计划。
+> This document outlines the phased development plan for Univona.
+> 本文档概述 Univona 的分阶段开发计划。
 
 ---
 
@@ -28,13 +28,13 @@ Foundation     Identity &     P2P Mode       Community      Directory &    Relea
 
 | # | Task / 任务 | Details / 详细说明 |
 |---|---|---|
-| 0.1 | Rust workspace setup | Initialize Cargo workspace with `nexuslink-core`, `nexuslink-community-server`, `nexuslink-directory-server`, `nexuslink-cli` crates. 初始化 Cargo 工作区 |
+| 0.1 | Rust workspace setup | Initialize Cargo workspace with `univona-core`, `univona-community-server`, `univona-directory-server`, `univona-cli` crates. 初始化 Cargo 工作区 |
 | 0.2 | Flutter project setup | Create Flutter project with folder structure, configure `flutter_rust_bridge` FFI. 创建 Flutter 项目，配置 FFI |
 | 0.3 | CI/CD pipeline | GitHub Actions: lint (clippy + dart analyze), test, build for all platforms. CI/CD 流水线配置 |
 | 0.4 | Protocol specification | Write Protocol Buffer schemas for all message types (see ARCHITECTURE.md §9). 编写 Protobuf 协议定义 |
 | 0.5 | Development docs | Set up mdBook or similar for protocol specification site. 搭建协议规范文档站 |
 | 0.6 | Code style & linting | Configure rustfmt, clippy, dart formatter, commit hooks. 配置代码风格检查 |
-| 0.7 | Rust server crate scaffold | Set up `nexuslink-community-server` crate with Axum + tokio + SQLx dependencies. Implement basic HTTP service skeleton: health check endpoint, graceful shutdown, configuration loading (TOML/env). 搭建 Rust 服务端 crate（Axum + tokio + SQLx），实现基本 HTTP 服务骨架：健康检查端点、优雅关闭、配置加载 |
+| 0.7 | Rust server crate scaffold | Set up `univona-community-server` crate with Axum + tokio + SQLx dependencies. Implement basic HTTP service skeleton: health check endpoint, graceful shutdown, configuration loading (TOML/env). 搭建 Rust 服务端 crate（Axum + tokio + SQLx），实现基本 HTTP 服务骨架：健康检查端点、优雅关闭、配置加载 |
 | 0.8 | Database migration tooling | Configure SQLx migrate CLI and embedded migrations. Create initial PostgreSQL schema: `migrations/0001_init.sql` with core tables (`users`, `devices`, `prekeys`, `config`). Set up migration version tracking. 配置 SQLx 数据库迁移工具，创建初始 PostgreSQL schema |
 | 0.9 | Docker development environment | Create `docker-compose.dev.yml` with: PostgreSQL 16 (with pgvector extension), Redis 7 (for caching/pub-sub), server binary with cargo-watch hot-reload. Shared volumes for persistent dev data. 搭建 Docker 开发环境（PostgreSQL + Redis + 服务端热重载） |
 | 0.10 | Server CI pipeline | GitHub Actions workflow for server: compile check, `cargo test`, clippy lint with deny warnings, `sqlx prepare --check` for offline query verification, migration consistency check. Run against a PostgreSQL service container. 服务端 CI 流水线（编译、测试、clippy、数据库迁移检查） |
@@ -75,10 +75,10 @@ Foundation     Identity &     P2P Mode       Community      Directory &    Relea
 | 1.10 | Flutter identity UI | First-launch screen: key generation animation, mnemonic display/verify, connection mode selection. Flutter 身份界面 |
 | 1.11 | Server UUID auth module | Implement server-side challenge-response authentication: server issues random nonce, client signs with device key, server verifies signature against registered public key. Token issuance (JWT or opaque token) with configurable expiry. Session management and refresh flow. 服务端 UUID 认证模块：挑战-应答协议实现，令牌签发与会话管理 |
 | 1.12 | Prekey storage service | REST API endpoints for prekey bundle management: `POST /v1/prekeys` (upload bundle), `GET /v1/prekeys/{uuid}` (fetch bundle), `DELETE /v1/prekeys/{uuid}/{key_id}` (consume one-time prekey). Auto-replenish threshold notification. Prekey count monitoring endpoint. 预密钥存储服务：接收和提供 prekey bundles 的 REST API |
-| 1.13 | Server shared layer foundation | Build shared server infrastructure: unified error handling with structured error codes (`AppError` enum mapped to HTTP status), configuration management (`nexuslink.toml` + environment variable overrides), standardized JSON API response envelope (`{"ok": bool, "data": ..., "error": ...}`), request ID tracing propagation. 服务端共享层基础：统一错误处理、配置管理、API 响应格式、请求追踪 |
+| 1.13 | Server shared layer foundation | Build shared server infrastructure: unified error handling with structured error codes (`AppError` enum mapped to HTTP status), configuration management (`univona.toml` + environment variable overrides), standardized JSON API response envelope (`{"ok": bool, "data": ..., "error": ...}`), request ID tracing propagation. 服务端共享层基础：统一错误处理、配置管理、API 响应格式、请求追踪 |
 
 ### Deliverables / 交付物
-- [ ] `nexuslink-core` crate with identity and crypto modules, 90%+ test coverage
+- [ ] `univona-core` crate with identity and crypto modules, 90%+ test coverage
 - [ ] Can generate identity, display UUID, show mnemonic
 - [ ] Can perform X3DH + Double Ratchet between two local instances
 - [ ] Can encrypt/decrypt group messages with Sender Keys
@@ -118,7 +118,7 @@ Foundation     Identity &     P2P Mode       Community      Directory &    Relea
 | 2.11 | Offline message relay service | Server-side encrypted message staging service: accept and store encrypted blobs (max 256KB per message, configurable) for offline recipients, TTL-based automatic expiration and cleanup (cron job or tokio background task), delivery confirmation and blob deletion upon recipient retrieval, storage quota per user to prevent abuse. 离线消息中继服务：接收加密消息暂存、TTL 自动过期清理、投递确认、用户配额管理 |
 
 ### Deliverables / 交付物
-- [ ] Two NexusLink clients can chat over P2P (same LAN and across Internet)
+- [ ] Two Univona clients can chat over P2P (same LAN and across Internet)
 - [ ] QR code scanning works on mobile
 - [ ] Messages delivered when both online; queued at relay when offline
 - [ ] Chat UI functional on all 5 platforms
@@ -151,12 +151,12 @@ Foundation     Identity &     P2P Mode       Community      Directory &    Relea
 | 3.6 | Media handling | Encrypted file upload/download. Thumbnail generation. Size limits. 媒体处理 |
 | 3.7 | Moderation tools | Ban, mute, delete (metadata only — can't read content). Moderation log. 管理工具 |
 | 3.8 | Docker packaging | Dockerfile, docker-compose.yml, one-command deploy. Docker 打包 |
-| 3.9 | Admin CLI | `nexuslink-cli` for server administration: user management, stats, config. 管理 CLI |
+| 3.9 | Admin CLI | `univona-cli` for server administration: user management, stats, config. 管理 CLI |
 | 3.10 | Flutter server UI | Server browser, channel list, member list, channel chat view. Flutter 服务器界面 |
 | 3.11 | Push notifications | FCM (Android), APNs (iOS) integration via community server. 推送通知 |
 | 3.12 | Multi-device message fan-out | Server encrypts and delivers to all registered devices of a user. 多设备消息分发 |
 | 3.13 | Database design & implementation | Complete PostgreSQL schema design and implementation. Core tables: `members` (uuid, display_name, avatar_hash, joined_at, role, status), `devices` (device_id, member_uuid, public_key, device_name, last_seen), `channels` (id, name, type, topic, created_by, created_at, sort_order), `channel_members` (channel_id, member_uuid, permissions, joined_at), `messages` (id, channel_id, sender_uuid, encrypted_payload, sequence_id, sent_at, edited_at), `media` (id, message_id, encrypted_blob_path, mime_type, size_bytes, thumbnail_path), `prekeys` (id, member_uuid, key_data, uploaded_at, consumed), `audit_log` (id, actor_uuid, action, target_type, target_id, metadata_json, timestamp), `server_config` (key, value, updated_at). Indexes on foreign keys, composite indexes for common query patterns (e.g., messages by channel + sequence_id). Proper use of PostgreSQL features: ULID/UUIDv7 for ordered primary keys, JSONB for flexible metadata, `timestamptz` for all timestamps. 数据库设计与实现：完整的 PostgreSQL schema，包括 members、channels、messages、media、audit_log 等所有表定义，索引优化 |
-| 3.14 | Redis cache layer | Implement Redis-backed caching and real-time data layer: online presence tracking (member UUID → last heartbeat timestamp, with configurable TTL for "online" threshold), session cache (auth tokens → session data, avoiding repeated DB lookups), rate limiting counters (sliding window via Redis sorted sets or `INCR`+`EXPIRE`), channel unread counts cache, typing indicator pub/sub. Use `deadpool-redis` connection pool. Define clear cache invalidation strategy and key naming conventions (`nexuslink:{entity}:{id}:{field}`). Redis 缓存层：在线状态追踪、会话缓存、速率限制计数器、未读消息计数、输入指示器 pub/sub |
+| 3.14 | Redis cache layer | Implement Redis-backed caching and real-time data layer: online presence tracking (member UUID → last heartbeat timestamp, with configurable TTL for "online" threshold), session cache (auth tokens → session data, avoiding repeated DB lookups), rate limiting counters (sliding window via Redis sorted sets or `INCR`+`EXPIRE`), channel unread counts cache, typing indicator pub/sub. Use `deadpool-redis` connection pool. Define clear cache invalidation strategy and key naming conventions (`univona:{entity}:{id}:{field}`). Redis 缓存层：在线状态追踪、会话缓存、速率限制计数器、未读消息计数、输入指示器 pub/sub |
 | 3.15 | Server performance testing | Establish performance baseline and optimization: load testing with wrk (HTTP endpoints) and k6 (WebSocket scenarios), target benchmarks: 10,000 concurrent WebSocket connections per node, < 50ms p99 message delivery latency, 1,000 messages/second throughput per channel. Database query profiling with `EXPLAIN ANALYZE`, index tuning, connection pool sizing (`sqlx::PgPoolOptions`). Identify and resolve N+1 query patterns. Memory profiling with `jemalloc` + `heaptrack`. Document performance characteristics and capacity planning guidelines. 服务端性能测试：wrk/k6 压测、WebSocket 并发测试、数据库查询优化、内存分析、容量规划 |
 | 3.16 | Server security hardening | Comprehensive server-side security measures: TLS 1.3 configuration (via `rustls`, reject TLS < 1.2), strict request validation (content-type checking, payload size limits, malformed JSON rejection), SQL injection prevention verified (all queries via SQLx compile-time checked parameterized queries), input sanitization and validation layer (`validator` crate for struct field constraints), HTTP security headers (HSTS, X-Content-Type-Options, X-Frame-Options), authentication token rotation and revocation, brute-force protection on auth endpoints (exponential backoff + lockout), dependency audit via `cargo audit` in CI. 服务端安全加固：TLS 配置、请求验证、SQL 注入防护（SQLx 参数化查询）、输入校验、安全响应头、认证令牌轮转、暴力破解防护 |
 
@@ -257,9 +257,9 @@ Foundation     Identity &     P2P Mode       Community      Directory &    Relea
 
 ## Phase 6: Advanced Features / 高级功能
 
-**Goal / 目标**: Extend NexusLink with advanced capabilities based on user feedback and community needs.
+**Goal / 目标**: Extend Univona with advanced capabilities based on user feedback and community needs.
 
-根据用户反馈和社区需求扩展 NexusLink 的高级功能。
+根据用户反馈和社区需求扩展 Univona 的高级功能。
 
 ### Planned Features / 计划功能
 
@@ -289,7 +289,7 @@ Foundation     Identity &     P2P Mode       Community      Directory &    Relea
 
 ### Target Users / 目标用户
 
-| User Segment / 用户群体 | Why NexusLink / 为什么选 NexusLink | Mode / 使用模式 |
+| User Segment / 用户群体 | Why Univona / 为什么选 Univona | Mode / 使用模式 |
 |---|---|---|
 | **Open-source communities** 开源社区 | Self-host, own their data, avoid Discord/Slack lock-in 自托管，数据自主 | Mode B (community server) |
 | **Privacy-conscious individuals** 隐私敏感个人用户 | No registration, P2P option, choose trust level 无需注册，P2P 可选 | Mode C (P2P) + Mode B |
@@ -316,7 +316,7 @@ Foundation     Identity &     P2P Mode       Community      Directory &    Relea
    用户自主选择信任级别：
      P2P → trust nobody but yourself
      Community → trust a specific server operator
-     Official → trust the NexusLink organization + KYC
+     Official → trust the Univona organization + KYC
 
 4. Community Data Sovereignty / 社区数据主权
    Community operators own their data.

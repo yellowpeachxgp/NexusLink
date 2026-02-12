@@ -1,7 +1,7 @@
-# NexusLink Architecture / 架构设计文档
+# Univona Architecture / 架构设计文档
 
-> This document provides a detailed technical breakdown of NexusLink's architecture.
-> 本文档提供 NexusLink 架构的详细技术说明。
+> This document provides a detailed technical breakdown of Univona's architecture.
+> 本文档提供 Univona 架构的详细技术说明。
 
 ---
 
@@ -26,9 +26,9 @@
 
 ## 1. System Overview / 系统概览
 
-NexusLink is a three-tier hybrid messaging system:
+Univona is a three-tier hybrid messaging system:
 
-NexusLink 是一个三层混合架构即时通讯系统：
+Univona 是一个三层混合架构即时通讯系统：
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -64,12 +64,12 @@ NexusLink 是一个三层混合架构即时通讯系统：
 
 ### 1.1 System Panorama / 系统全景
 
-The following diagram shows the complete NexusLink system topology -- how the Directory Server, Community Servers, Client Apps, and P2P connections relate to each other.
+The following diagram shows the complete Univona system topology -- how the Directory Server, Community Servers, Client Apps, and P2P connections relate to each other.
 
-下图展示了 NexusLink 完整的系统拓扑——目录服务器、社区服务器、客户端 App 和 P2P 连接之间的关系。
+下图展示了 Univona 完整的系统拓扑——目录服务器、社区服务器、客户端 App 和 P2P 连接之间的关系。
 
 ```
-NexusLink 系统全景 / System Panorama
+Univona 系统全景 / System Panorama
 
                     ┌─────────────────────────────┐
                     │      Directory Server        │
@@ -138,9 +138,9 @@ Key / 图例:
 
 ### 1.2 Four Roles and Their Boundaries / 四个角色的职责边界
 
-NexusLink has exactly four types of participants. Each has a strictly defined scope of what it can and cannot do.
+Univona has exactly four types of participants. Each has a strictly defined scope of what it can and cannot do.
 
-NexusLink 恰好有四种参与者。每种参与者都有严格定义的能力范围。
+Univona 恰好有四种参与者。每种参与者都有严格定义的能力范围。
 
 #### Client App / 客户端 App
 
@@ -293,7 +293,7 @@ Plaintext → Rust Core encrypt → WebRTC DataChannel → Rust Core decrypt →
 
 - No server = no metadata leakage. No third party knows that communication is happening. / 无服务器 = 无元数据泄露。没有第三方知道通讯正在发生。
 - No offline messaging capability (unless both devices are on the same LAN via mDNS). / 无离线消息能力（除非两台设备通过 mDNS 在同一局域网内）。
-- Highest privacy tier in NexusLink. / NexusLink 中最高隐私级别。
+- Highest privacy tier in Univona. / Univona 中最高隐私级别。
 
 ### 1.3 User Journey Map / 用户完整旅程
 
@@ -352,9 +352,9 @@ User Journey / 用户旅程
 
 ### 1.4 Cross-Mode Communication / 跨模式通讯
 
-NexusLink's isolation-by-design means that cross-community communication requires explicit action. Here are the four most common scenarios:
+Univona's isolation-by-design means that cross-community communication requires explicit action. Here are the four most common scenarios:
 
-NexusLink 的隔离设计意味着跨社区通讯需要明确的操作。以下是四种最常见的场景：
+Univona 的隔离设计意味着跨社区通讯需要明确的操作。以下是四种最常见的场景：
 
 **Scenario 1 / 场景 1: Alice (Community A) wants to chat with Bob (Community B) / Alice（社区 A）想和 Bob（社区 B）聊天**
 
@@ -423,9 +423,9 @@ This matrix shows exactly what each role in the system can and cannot see.
 
 ### 2.0 Design Philosophy: Choice over Mandate / 设计理念：选择而非强制
 
-NexusLink's entire design is built on giving users choice. This extends to identity security -- users should choose their own security level, not be forced into one.
+Univona's entire design is built on giving users choice. This extends to identity security -- users should choose their own security level, not be forced into one.
 
-NexusLink 的整个设计都建立在给用户选择权之上。这也延伸到身份安全——用户应该自己选择安全级别，而不是被强制。
+Univona 的整个设计都建立在给用户选择权之上。这也延伸到身份安全——用户应该自己选择安全级别，而不是被强制。
 
 ```
 Identity Security Tiers / 身份安全分级：
@@ -560,8 +560,8 @@ Tier 3: Hardware Mode / 硬件模式（高级）
   Algorithm note / 算法说明：
     - YubiKey 5+ supports Ed25519 natively
       YubiKey 5+ 原生支持 Ed25519
-    - Older FIDO2 keys use P-256; NexusLink supports both curves for identity
-      旧版 FIDO2 密钥使用 P-256；NexusLink 两种曲线都支持作为身份密钥
+    - Older FIDO2 keys use P-256; Univona supports both curves for identity
+      旧版 FIDO2 密钥使用 P-256；Univona 两种曲线都支持作为身份密钥
     - When P-256 is used, UUID derivation uses the same SHA-256(pubkey) scheme
       使用 P-256 时，UUID 推导使用相同的 SHA-256(pubkey) 方案
 
@@ -643,11 +643,11 @@ Identity Key (IK) — 身份密钥
                         │
                         ▼
             ┌───────────────────────┐
-            │  "Welcome to NexusLink│
+            │  "Welcome to Univona│
             │   Choose your         │
             │   security level"     │
             │                       │
-            │  "欢迎来到 NexusLink   │
+            │  "欢迎来到 Univona   │
             │   选择你的安全级别"     │
             │                       │
             │  [Easy]  便捷          │
@@ -729,7 +729,7 @@ without a mnemonic or hardware backup.
 ### 2.3 UUID Format / UUID 格式
 
 ```
-Prefix:  "nxl:"          (identifies NexusLink addresses)
+Prefix:  "nxl:"          (identifies Univona addresses)
 Body:    Base58(SHA-256(Ed25519_PublicKey)[0..32])
 Length:  ~48 characters total
 
@@ -996,7 +996,7 @@ communities (
     description     TEXT,
     tags            VARCHAR[] ,
     endpoint_url    VARCHAR(500) NOT NULL,   -- community server address
-    owner_uuid      VARCHAR(60) NOT NULL,    -- NexusLink UUID of owner
+    owner_uuid      VARCHAR(60) NOT NULL,    -- Univona UUID of owner
     public_key      BYTEA NOT NULL,          -- community server's signing key
     created_at      TIMESTAMPTZ,
     verified        BOOLEAN DEFAULT FALSE,
@@ -1007,7 +1007,7 @@ communities (
 
 -- KYC records / 实名认证记录
 kyc_records (
-    uuid            VARCHAR(60) PRIMARY KEY, -- NexusLink UUID
+    uuid            VARCHAR(60) PRIMARY KEY, -- Univona UUID
     status          ENUM('pending','approved','rejected'),
     verified_at     TIMESTAMPTZ,
     -- Actual identity documents stored encrypted,
@@ -1355,13 +1355,13 @@ GET /health/ready
     供负载均衡器判断路由
 
 GET /metrics (Prometheus format)
-  - nexuslink_directory_requests_total{method, path, status}
-  - nexuslink_directory_request_duration_seconds{method, path}
-  - nexuslink_directory_db_pool_connections{state="idle|active|waiting"}
-  - nexuslink_directory_kyc_submissions_total{status}
-  - nexuslink_directory_communities_registered_total
-  - nexuslink_directory_search_queries_total
-  - nexuslink_directory_rate_limit_rejections_total
+  - univona_directory_requests_total{method, path, status}
+  - univona_directory_request_duration_seconds{method, path}
+  - univona_directory_db_pool_connections{state="idle|active|waiting"}
+  - univona_directory_kyc_submissions_total{status}
+  - univona_directory_communities_registered_total
+  - univona_directory_search_queries_total
+  - univona_directory_rate_limit_rejections_total
 ```
 
 ---
@@ -1411,22 +1411,22 @@ Community Server CAN see (trade-off) / 社区服务器能看到（权衡）：
 # 社区服务器的 docker-compose.yml
 version: '3.8'
 services:
-  nexuslink-community:
-    image: nexuslink/community-server:latest
+  univona-community:
+    image: univona/community-server:latest
     ports:
       - "443:443"
     volumes:
       - ./data:/data
       - ./certs:/certs
     environment:
-      - NEXUSLINK_DOMAIN=your.community.com
-      - NEXUSLINK_ADMIN_UUID=nxl:your_uuid_here
-      - NEXUSLINK_MAX_MEMBERS=10000
-      - NEXUSLINK_STORAGE_LIMIT=50GB
+      - UNIVONA_DOMAIN=your.community.com
+      - UNIVONA_ADMIN_UUID=nxl:your_uuid_here
+      - UNIVONA_MAX_MEMBERS=10000
+      - UNIVONA_STORAGE_LIMIT=50GB
       # Optional: register with official directory
       # 可选：注册到官方目录
-      - NEXUSLINK_DIRECTORY_URL=https://directory.nexuslink.org
-      - NEXUSLINK_DIRECTORY_TOKEN=your_registration_token
+      - UNIVONA_DIRECTORY_URL=https://directory.univona.org
+      - UNIVONA_DIRECTORY_TOKEN=your_registration_token
     restart: unless-stopped
 
   postgres:
@@ -1434,7 +1434,7 @@ services:
     volumes:
       - ./pgdata:/var/lib/postgresql/data
     environment:
-      - POSTGRES_DB=nexuslink
+      - POSTGRES_DB=univona
       - POSTGRES_PASSWORD_FILE=/run/secrets/db_password
 ```
 
@@ -1914,25 +1914,25 @@ Observability Stack / 可观测性体系：
    Endpoint: GET /metrics (Prometheus text format)
 
    Key Metrics / 关键指标：
-   - nexuslink_ws_connections_active          (gauge)
+   - univona_ws_connections_active          (gauge)
      当前活跃 WebSocket 连接数
-   - nexuslink_ws_connections_total           (counter)
+   - univona_ws_connections_total           (counter)
      WebSocket 连接总数
-   - nexuslink_messages_routed_total          (counter, labels: type)
+   - univona_messages_routed_total          (counter, labels: type)
      路由消息总数
-   - nexuslink_messages_queued_offline        (gauge)
+   - univona_messages_queued_offline        (gauge)
      离线消息队列深度
-   - nexuslink_message_delivery_duration_seconds (histogram)
+   - univona_message_delivery_duration_seconds (histogram)
      消息投递延迟
-   - nexuslink_prekey_pool_size               (gauge, labels: uuid)
+   - univona_prekey_pool_size               (gauge, labels: uuid)
      预密钥池大小
-   - nexuslink_media_upload_bytes_total       (counter)
+   - univona_media_upload_bytes_total       (counter)
      媒体上传总字节数
-   - nexuslink_push_notifications_sent_total  (counter, labels: platform, status)
+   - univona_push_notifications_sent_total  (counter, labels: platform, status)
      推送通知发送总数
-   - nexuslink_db_pool_connections            (gauge, labels: state)
+   - univona_db_pool_connections            (gauge, labels: state)
      数据库连接池状态
-   - nexuslink_db_query_duration_seconds      (histogram, labels: query)
+   - univona_db_query_duration_seconds      (histogram, labels: query)
      数据库查询延迟
 
 2. Structured Logging / 结构化日志
@@ -1947,7 +1947,7 @@ Observability Stack / 可观测性体系：
    {
      "timestamp": "2025-06-15T10:23:45.123Z",
      "level": "INFO",
-     "target": "nexuslink_community::router",
+     "target": "univona_community::router",
      "span": { "request_id": "01H5..." },
      "fields": {
        "message": "message routed",
@@ -1998,7 +1998,7 @@ Step 1: Key Exchange (out-of-band) / 密钥交换（带外）
 ──────────────────────────────────────────────────
   Alice shows QR code containing:
   Alice 展示包含以下信息的二维码：
-    - Her NexusLink UUID (public key)
+    - Her Univona UUID (public key)
     - A temporary libp2p PeerID
     - Optional: relay node address
 
@@ -2060,14 +2060,14 @@ Solution: Optional message relay / 解决方案：可选消息中继
 ## 9. Message Format / 消息格式
 
 ```protobuf
-// NexusLink Wire Protocol (Protocol Buffers)
-// NexusLink 传输协议（Protocol Buffers）
+// Univona Wire Protocol (Protocol Buffers)
+// Univona 传输协议（Protocol Buffers）
 
 syntax = "proto3";
-package nexuslink.protocol;
+package univona.protocol;
 
 message Envelope {
-    string sender_uuid = 1;          // sender's NexusLink UUID
+    string sender_uuid = 1;          // sender's Univona UUID
     string recipient_uuid = 2;       // recipient's UUID (or group ID)
     uint32 sender_device_id = 3;     // which device sent this
     MessageType type = 4;
@@ -2123,7 +2123,7 @@ Local encrypted database: SQLCipher (SQLite + AES-256)
 
 Database key derived from:
 数据库密钥来源：
-  HKDF(device_key, "nexuslink-local-db", device_id)
+  HKDF(device_key, "univona-local-db", device_id)
 
 Tables / 表：
   - messages        (decrypted message cache)      消息缓存
@@ -2323,8 +2323,8 @@ Servers are configured through a layered system: TOML config files, environment 
 服务端通过分层系统配置：TOML 配置文件、环境变量覆盖，以及有限的运行时热更新。
 
 ```toml
-# nexuslink-server.toml (example configuration)
-# nexuslink-server.toml（配置示例）
+# univona-server.toml (example configuration)
+# univona-server.toml（配置示例）
 
 [server]
 bind_address = "0.0.0.0"
@@ -2334,7 +2334,7 @@ tls_key_path = "/certs/privkey.pem"
 max_connections = 50000
 
 [database]
-url = "postgresql://nexuslink:password@localhost:5432/nexuslink"
+url = "postgresql://univona:password@localhost:5432/univona"
 max_connections = 20
 min_connections = 5
 
@@ -2367,12 +2367,12 @@ format = "json"
 Configuration Layer Priority (highest → lowest) /
 配置层优先级（最高 → 最低）：
 
-  1. Environment variables (NEXUSLINK_SERVER_PORT=8443)
+  1. Environment variables (UNIVONA_SERVER_PORT=8443)
      环境变量
-     Convention: NEXUSLINK_ prefix + section_key in SCREAMING_SNAKE_CASE
-     约定：NEXUSLINK_ 前缀 + section_key 大写蛇形
+     Convention: UNIVONA_ prefix + section_key in SCREAMING_SNAKE_CASE
+     约定：UNIVONA_ 前缀 + section_key 大写蛇形
 
-  2. TOML config file (nexuslink-server.toml)
+  2. TOML config file (univona-server.toml)
      TOML 配置文件
 
   3. Compiled-in defaults
@@ -2464,8 +2464,8 @@ Shared types used across both servers to ensure consistency in API contracts and
 
 ```rust
 // UUID type / UUID 类型
-// NexusLink UUIDs use the "nxl:" prefix format
-// NexusLink UUID 使用 "nxl:" 前缀格式
+// Univona UUIDs use the "nxl:" prefix format
+// Univona UUID 使用 "nxl:" 前缀格式
 pub struct NxlUuid(String);
 
 impl NxlUuid {
@@ -2567,18 +2567,18 @@ The simplest deployment: everything runs on one machine using Docker Compose. Su
 version: '3.8'
 
 services:
-  nexuslink-community:
-    image: nexuslink/community-server:latest
+  univona-community:
+    image: univona/community-server:latest
     ports:
       - "443:443"
     volumes:
-      - ./config:/etc/nexuslink
+      - ./config:/etc/univona
       - media_data:/data/media
       - certs:/certs
     environment:
-      - NEXUSLINK_DATABASE_URL=postgresql://nexuslink:${DB_PASSWORD}@postgres:5432/nexuslink
-      - NEXUSLINK_SERVER_BIND_ADDRESS=0.0.0.0
-      - NEXUSLINK_SERVER_PORT=443
+      - UNIVONA_DATABASE_URL=postgresql://univona:${DB_PASSWORD}@postgres:5432/univona
+      - UNIVONA_SERVER_BIND_ADDRESS=0.0.0.0
+      - UNIVONA_SERVER_PORT=443
     depends_on:
       postgres:
         condition: service_healthy
@@ -2593,11 +2593,11 @@ services:
     volumes:
       - pg_data:/var/lib/postgresql/data
     environment:
-      - POSTGRES_DB=nexuslink
-      - POSTGRES_USER=nexuslink
+      - POSTGRES_DB=univona
+      - POSTGRES_USER=univona
       - POSTGRES_PASSWORD=${DB_PASSWORD}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U nexuslink"]
+      test: ["CMD-SHELL", "pg_isready -U univona"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -2711,7 +2711,7 @@ Cross-Instance Message Routing / 跨实例消息路由：
        实例 1 检查本地连接注册表
     3. Recipient NOT found locally → publish to Redis channel
        接收者不在本地 → 发布到 Redis 频道
-       PUBLISH nexuslink:route:{recipient_uuid} <envelope>
+       PUBLISH univona:route:{recipient_uuid} <envelope>
     4. Instance 3 (subscribed) receives and delivers to recipient
        实例 3（已订阅）接收并投递给接收者
 
@@ -2933,9 +2933,9 @@ Key Scaling Bottlenecks / 关键扩展瓶颈：
 
 ### 14.0 Design Philosophy / 设计理念
 
-In Discord, bots run server-side with full access to plaintext messages — essentially "God Mode." In NexusLink, a Bot is a **Headless Client**: it has its own Ed25519 key pair and UUID, connects to a Community Server using the same WebSocket protocol as regular clients, and must participate in E2E key exchange to read any message.
+In Discord, bots run server-side with full access to plaintext messages — essentially "God Mode." In Univona, a Bot is a **Headless Client**: it has its own Ed25519 key pair and UUID, connects to a Community Server using the same WebSocket protocol as regular clients, and must participate in E2E key exchange to read any message.
 
-在 Discord 中，Bot 运行在服务端，拥有对明文消息的完全访问权——本质上是「上帝模式」。在 NexusLink 中，Bot 是一个**无头客户端（Headless Client）**：它拥有自己的 Ed25519 密钥对和 UUID，使用与普通客户端相同的 WebSocket 协议连接社区服务器，并且必须参与 E2E 密钥交换才能读取任何消息。
+在 Discord 中，Bot 运行在服务端，拥有对明文消息的完全访问权——本质上是「上帝模式」。在 Univona 中，Bot 是一个**无头客户端（Headless Client）**：它拥有自己的 Ed25519 密钥对和 UUID，使用与普通客户端相同的 WebSocket 协议连接社区服务器，并且必须参与 E2E 密钥交换才能读取任何消息。
 
 **Core principles / 核心原则:**
 
@@ -2962,7 +2962,7 @@ Bot Architecture / Bot 架构
 │  Bot Process (Headless) / 机器人进程（无头）           │
 │                                                       │
 │  ┌──────────────────┐  ┌──────────────────────────┐  │
-│  │  Bot Logic        │  │ NexusLink Bot SDK (Rust) │  │
+│  │  Bot Logic        │  │ Univona Bot SDK (Rust) │  │
 │  │  机器人逻辑        │  │                          │  │
 │  │                    │  │  • Crypto (E2E)          │  │
 │  │  - Command handler │◄►│  • WebSocket client      │  │
@@ -3037,7 +3037,7 @@ Bot Lifecycle / Bot 生命周期
 
 ### 14.4 Privacy Comparison with Discord / 与 Discord 的隐私对比
 
-| Aspect / 方面 | Discord | NexusLink |
+| Aspect / 方面 | Discord | Univona |
 |---|---|---|
 | Bot access to messages / Bot 对消息的访问 | All messages in permitted channels (plaintext) / 允许频道中的所有消息（明文） | Only channels where Bot participates in E2E key exchange / 仅 Bot 参与 E2E 密钥交换的频道 |
 | Invisible bots / 隐形 Bot | Possible with certain permissions / 某些权限下可能 | Impossible by design — Bot badge always visible / 设计上不可能——Bot 标识始终可见 |
@@ -3048,15 +3048,15 @@ Bot Lifecycle / Bot 生命周期
 
 ### 14.5 Bot SDK Overview / Bot SDK 概览
 
-The Bot SDK is a Rust crate (`nexuslink-bot-sdk`) that wraps the core library and provides a developer-friendly API:
+The Bot SDK is a Rust crate (`univona-bot-sdk`) that wraps the core library and provides a developer-friendly API:
 
-Bot SDK 是一个 Rust crate（`nexuslink-bot-sdk`），封装核心库并提供开发者友好的 API：
+Bot SDK 是一个 Rust crate（`univona-bot-sdk`），封装核心库并提供开发者友好的 API：
 
 ```rust
 // Conceptual API — not final implementation
 // 概念性 API——非最终实现
 
-use nexuslink_bot_sdk::{Bot, Event, Context};
+use univona_bot_sdk::{Bot, Event, Context};
 
 #[tokio::main]
 async fn main() {
@@ -3118,7 +3118,7 @@ async fn main() {
 ## Appendix: Cryptographic Library Dependencies / 附录：密码学库依赖
 
 ```toml
-# Cargo.toml dependencies for nexuslink-core
+# Cargo.toml dependencies for univona-core
 [dependencies]
 # Secure hardware abstraction / 安全硬件抽象
 nmshd-rust-crypto = "x.x"         # Cross-platform secure element

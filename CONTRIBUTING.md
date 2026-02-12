@@ -1,8 +1,8 @@
-# Contributing to NexusLink / 参与贡献
+# Contributing to Univona / 参与贡献
 
-Thank you for your interest in contributing to NexusLink! This document provides guidelines for contributing.
+Thank you for your interest in contributing to Univona! This document provides guidelines for contributing.
 
-感谢你对 NexusLink 贡献的兴趣！本文档提供贡献指南。
+感谢你对 Univona 贡献的兴趣！本文档提供贡献指南。
 
 ---
 
@@ -54,9 +54,9 @@ Thank you for your interest in contributing to NexusLink! This document provides
 
 **不要通过公开的 GitHub issue 报告安全漏洞。**
 
-Instead, please email: security@nexuslink.org (to be set up)
+Instead, please email: security@univona.org (to be set up)
 
-请发邮件至：security@nexuslink.org（待设立）
+请发邮件至：security@univona.org（待设立）
 
 ## Development Setup / 开发环境搭建
 
@@ -68,8 +68,8 @@ Instead, please email: security@nexuslink.org (to be set up)
 # - Protobuf compiler (protoc)
 
 # Clone / 克隆
-git clone https://github.com/user/nexuslink.git
-cd nexuslink
+git clone https://github.com/user/univona.git
+cd univona
 
 # Build Rust core / 构建 Rust 核心
 cargo build
