@@ -61,6 +61,361 @@ NexusLink 是一个三层混合架构即时通讯系统：
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
+### 1.1 System Panorama / 系统全景
+
+The following diagram shows the complete NexusLink system topology -- how the Directory Server, Community Servers, Client Apps, and P2P connections relate to each other.
+
+下图展示了 NexusLink 完整的系统拓扑——目录服务器、社区服务器、客户端 App 和 P2P 连接之间的关系。
+
+```
+NexusLink 系统全景 / System Panorama
+
+                    ┌─────────────────────────────┐
+                    │      Directory Server        │
+                    │        目录服务器              │
+                    │                               │
+                    │  • Community registry         │
+                    │    社区注册表                   │
+                    │  • Search / discovery         │
+                    │    搜索 / 发现                  │
+                    │  • KYC verification           │
+                    │    KYC 身份验证                 │
+                    │  • Official Plaza             │
+                    │    官方广场（内置社区实例）       │
+                    └──────┬──────────────┬─────────┘
+                           │ REST/HTTPS   │ REST/HTTPS
+              ┌────────────┘              └────────────┐
+              ▼                                        ▼
+ ┌────────────────────────┐            ┌────────────────────────┐
+ │   Community Server A   │            │   Community Server B   │
+ │     社区服务器 A        │            │     社区服务器 B        │
+ │                        │            │                        │
+ │  • WebSocket routing   │            │  • WebSocket routing   │
+ │  • Prekey management   │            │  • Prekey management   │
+ │  • Channels / RBAC     │            │  • Channels / RBAC     │
+ │  • Media storage       │            │  • Media storage       │
+ │  • Push notifications  │            │  • Push notifications  │
+ └───────┬────────────────┘            └──────────────┬────────┘
+         │ WebSocket                        WebSocket │
+         │                                            │
+         ▼                                            ▼
+ ┌───────────────┐    P2P (WebRTC/mDNS)    ┌───────────────┐
+ │  Client App   │◄───────────────────────►│  Client App   │
+ │  客户端 App    │                         │  客户端 App    │
+ │               │                         │               │
+ │  Rust Core    │                         │  Rust Core    │
+ │  + Flutter UI │                         │  + Flutter UI │
+ └───────┬───────┘                         └───────┬───────┘
+         │ REST/HTTPS                     REST/HTTPS│
+         └──────────────┐      ┌────────────────────┘
+                        ▼      ▼
+              ┌─────────────────────────┐
+              │   Community Server C    │
+              │     社区服务器 C         │
+              │   (or any other server) │
+              │  （或任何其他服务器）      │
+              └─────────────────────────┘
+
+Key / 图例:
+  ───► REST/HTTPS  : Client ↔ Directory Server (registration, search)
+                     客户端 ↔ 目录服务器（注册、搜索）
+  ───► WebSocket   : Client ↔ Community Server (real-time messaging)
+                     客户端 ↔ 社区服务器（实时消息）
+  ◄──► P2P         : Client ↔ Client (direct encrypted communication)
+                     客户端 ↔ 客户端（直接加密通讯）
+```
+
+**Key design points / 关键设计要点:**
+
+- Each Client App can simultaneously connect to the Directory Server and multiple Community Servers, plus establish P2P links with other clients.
+- Community Servers are completely isolated from each other -- they never communicate directly.
+- The Directory Server only knows that communities exist; it has no visibility into community membership or messages.
+
+- 每个客户端 App 可以同时连接目录服务器和多个社区服务器，还可以与其他客户端建立 P2P 链接。
+- 社区服务器之间完全隔离——它们之间从不直接通讯。
+- 目录服务器只知道社区的存在；它无法看到社区成员或消息。
+
+### 1.2 Four Roles and Their Boundaries / 四个角色的职责边界
+
+NexusLink has exactly four types of participants. Each has a strictly defined scope of what it can and cannot do.
+
+NexusLink 恰好有四种参与者。每种参与者都有严格定义的能力范围。
+
+#### Client App / 客户端 App
+
+The Client App is the user's device application, composed of two layers connected via FFI:
+
+客户端 App 是用户的设备应用程序，由通过 FFI 连接的两层组成：
+
+```
+┌─────────────────────────────────────────────────┐
+│              Client App Architecture             │
+│                客户端 App 架构                     │
+├─────────────────────────────────────────────────┤
+│  Flutter UI (Application Layer / 应用层)         │
+│  • Chat interface / 聊天界面                      │
+│  • Contact management / 联系人管理                │
+│  • Community browsing / 社区浏览                  │
+│  • Settings / 设置                                │
+├──────────────────────┬──────────────────────────┤
+│                      │ FFI                       │
+├──────────────────────┴──────────────────────────┤
+│  Rust Core (Identity & Crypto Layer / 身份加密层) │
+│  • Key generation & management / 密钥生成与管理   │
+│  • E2E encryption/decryption / 端到端加解密       │
+│  • Signal Protocol (Double Ratchet) / 信号协议    │
+│  • UUID generation / UUID 生成                    │
+│  • Local DB encryption / 本地数据库加密            │
+└─────────────────────────────────────────────────┘
+```
+
+**Simultaneous connections / 同时连接:**
+
+| Connection / 连接 | Protocol / 协议 | Purpose / 用途 |
+|---|---|---|
+| Directory Server / 目录服务器 | REST/HTTPS | Community discovery, KYC / 社区发现、KYC |
+| Community A, B, ... / 社区 A, B, ... | WebSocket | Real-time messaging / 实时消息 |
+| Other clients / 其他客户端 | WebRTC / mDNS | P2P direct chat / P2P 直连聊天 |
+
+**Local storage / 本地存储:**
+
+- SQLCipher encrypted database for messages, contacts, and session state / SQLCipher 加密数据库存储消息、联系人和会话状态
+- OS secure storage (Keychain/Keystore) or hardware key for private key protection / 操作系统安全存储（Keychain/Keystore）或硬件密钥保护私钥
+
+**Key principle / 核心原则:** The client is the only place in the entire system that ever sees plaintext message content. All encryption and decryption happens exclusively in the Rust Core on the user's device.
+
+**核心原则：** 客户端是整个系统中唯一能看到明文消息内容的地方。所有加密和解密都只在用户设备上的 Rust Core 中进行。
+
+#### Community Server / 社区服务器
+
+A Community Server hosts one community. It is the real-time message relay and community management hub, but it is cryptographically blind to message content.
+
+社区服务器承载一个社区。它是实时消息中继和社区管理中心，但在密码学上对消息内容完全不可见。
+
+**What it CAN see / 它能看到的:**
+
+- Member UUIDs and online/offline status / 成员 UUID 和在线/离线状态
+- Who communicates with whom (sender UUID → receiver UUID) / 谁和谁通讯（发送者 UUID → 接收者 UUID）
+- Message timing and size / 消息时间和大小
+- Member IP addresses / 成员 IP 地址
+
+**What it CANNOT see / 它不能看到的:**
+
+- Message plaintext or decrypted file content / 消息明文或解密后的文件内容
+- User private keys / 用户私钥
+- Data from other Community Servers / 其他社区服务器的数据
+
+**Core functions / 核心功能:**
+
+1. **WebSocket message routing / WebSocket 消息路由** -- 1:1 messages, group messages, offline message queuing / 一对一消息、群组消息、离线消息排队
+2. **Prekey management / 预密钥管理** -- Stores public prekey bundles so users can initiate E2E sessions even when the recipient is offline / 存储公开预密钥包，使用户即使在接收者离线时也能发起 E2E 会话
+3. **Channels and RBAC / 频道与权限控制** -- Channel creation, role-based access control, moderation / 频道创建、基于角色的访问控制、内容管理
+4. **Media storage / 媒体存储** -- Stores encrypted media blobs uploaded by clients / 存储客户端上传的加密媒体文件
+5. **Push notifications / 推送通知** -- Sends push notification triggers (without message content) / 发送推送通知触发（不含消息内容）
+
+**What it does NOT do / 它不做的事:**
+
+- No inter-server communication -- Community Servers never talk to each other / 不进行服务器间通讯——社区服务器之间从不互相通讯
+- No reporting to Directory Server -- it does not send activity data upstream / 不向目录服务器报告——不向上游发送活动数据
+- No decryption -- it has no keys to decrypt any message / 不进行解密——它没有任何密钥来解密消息
+- No real identity verification -- it only knows UUIDs, not real names / 不进行真实身份验证——它只知道 UUID，不知道真实姓名
+
+#### Directory Server / 目录服务器
+
+The Directory Server is the public-facing registry and discovery service for communities. It is the lightest component in terms of data access.
+
+目录服务器是面向公众的社区注册和发现服务。它在数据访问方面是最轻量的组件。
+
+**What it CAN see / 它能看到的:**
+
+- Registered community names and server addresses / 已注册的社区名称和服务器地址
+- KYC verification status of community operators / 社区运营者的 KYC 验证状态
+- Search queries from clients / 来自客户端的搜索查询
+- Client IP addresses when accessing the directory / 客户端访问目录时的 IP 地址
+
+**What it CANNOT see / 它不能看到的:**
+
+- Community member lists / 社区成员列表
+- Any message content (plaintext or ciphertext) / 任何消息内容（明文或密文）
+- Which communities a user has joined / 用户加入了哪些社区
+- Who is communicating with whom / 谁在和谁通讯
+
+**Core functions / 核心功能:**
+
+| Function / 功能 | Description / 描述 |
+|---|---|
+| A. Community registration & discovery / 社区注册与发现 | Communities register their name, description, and address. Clients browse or search. / 社区注册名称、描述和地址。客户端浏览或搜索。 |
+| B. Community search / 社区搜索 | Full-text search by name, tags, category / 按名称、标签、分类全文搜索 |
+| C. KYC verification / KYC 身份验证 | Optional identity verification for community operators to build trust / 可选的社区运营者身份验证以建立信任 |
+| D. Official Plaza / 官方广场 | A built-in Community Server instance operated alongside the Directory for public discussion / 与目录服务器一起运营的内置社区服务器实例，用于公共讨论 |
+
+**What it does NOT do / 它不做的事:**
+
+- No message forwarding -- it never touches any message / 不转发消息——它从不接触任何消息
+- No member list storage -- it does not know who joined which community / 不存储成员列表——它不知道谁加入了哪个社区
+- No key exchange participation -- it plays no role in E2E setup / 不参与密钥交换——它在 E2E 建立中没有任何角色
+- No activity monitoring -- it cannot observe user behavior within communities / 不监控活动——它无法观察用户在社区内的行为
+
+#### P2P Direct / P2P 直连
+
+P2P Direct is the serverless communication mode. Two clients connect directly without any intermediary.
+
+P2P 直连是无服务器通讯模式。两个客户端直接连接，没有任何中间人。
+
+**Connection establishment / 连接建立:**
+
+```
+Client A                                          Client B
+客户端 A                                           客户端 B
+
+  │  1. Exchange public keys (out-of-band or via community)        │
+  │     交换公钥（带外方式或通过社区）                                  │
+  │                                                                 │
+  │  2. STUN NAT traversal / STUN NAT 穿透                         │
+  │────────────────────► STUN Server ◄──────────────────────────────│
+  │                                                                 │
+  │  3. WebRTC DataChannel established / WebRTC DataChannel 建立    │
+  │◄═══════════════════════════════════════════════════════════════►│
+  │                                                                 │
+  │  (LAN alternative: mDNS discovery / 局域网替代方案：mDNS 发现)   │
+  │◄═══════════════════════════════════════════════════════════════►│
+```
+
+**Data flow / 数据流:**
+
+```
+Plaintext → Rust Core encrypt → WebRTC DataChannel → Rust Core decrypt → Plaintext
+明文     → Rust Core 加密    → WebRTC DataChannel  → Rust Core 解密   → 明文
+```
+
+**Characteristics / 特点:**
+
+- No server = no metadata leakage. No third party knows that communication is happening. / 无服务器 = 无元数据泄露。没有第三方知道通讯正在发生。
+- No offline messaging capability (unless both devices are on the same LAN via mDNS). / 无离线消息能力（除非两台设备通过 mDNS 在同一局域网内）。
+- Highest privacy tier in NexusLink. / NexusLink 中最高隐私级别。
+
+### 1.3 User Journey Map / 用户完整旅程
+
+This section traces a new user's complete journey from installation to active communication.
+
+本节追踪新用户从安装到活跃通讯的完整旅程。
+
+```
+User Journey / 用户旅程
+
+ ┌──────────────────────────────────────────────────────────────────┐
+ │  1. Install & First Launch (Offline) / 安装与首次启动（离线）      │
+ │                                                                  │
+ │     • Generate Ed25519 key pair / 生成 Ed25519 密钥对             │
+ │     • Derive UUID from public key / 从公钥派生 UUID               │
+ │     • Choose security tier (Easy/Standard/Hardware)              │
+ │       选择安全级别（便捷/标准/硬件）                                │
+ │     • Set display name (local only) / 设置显示名称（仅本地）       │
+ │                                                                  │
+ │     ⚡ At this point, the user has a full identity with ZERO     │
+ │        server contact. / 此时用户已拥有完整身份，零服务器接触。     │
+ └──────────────────────────┬───────────────────────────────────────┘
+                            │
+                            ▼
+ ┌──────────────────────────────────────────────────────────────────┐
+ │  2. Choose Connection Mode / 选择连接模式                         │
+ │                                                                  │
+ │     ┌─────────────┐  ┌──────────────────┐  ┌─────────────────┐  │
+ │     │ A. Browse    │  │ B. Join friend's │  │ C. Direct chat  │  │
+ │     │ communities  │  │ community via    │  │ via QR/link     │  │
+ │     │ 浏览社区      │  │ invite link      │  │ 通过 QR/链接    │  │
+ │     │              │  │ 通过邀请链接加入   │  │ 直接聊天        │  │
+ │     │              │  │ 朋友的社区        │  │                 │  │
+ │     └──────┬───────┘  └────────┬─────────┘  └───────┬─────────┘  │
+ └────────────┼───────────────────┼────────────────────┼────────────┘
+              │                   │                    │
+              ▼                   ▼                    ▼
+ ┌────────────────────┐ ┌──────────────────┐ ┌──────────────────────┐
+ │  Path A:           │ │  Path B:         │ │  Path C:             │
+ │  Directory → Search│ │  Open invite     │ │  Scan QR / tap link  │
+ │  → Pick community  │ │  link → Connect  │ │  扫描 QR / 点击链接   │
+ │  → Upload prekeys  │ │  to community    │ │  → Exchange keys     │
+ │  → Start chatting  │ │  server → Upload │ │    交换密钥            │
+ │                    │ │  prekeys → Chat  │ │  → STUN/WebRTC       │
+ │  目录 → 搜索       │ │                  │ │  → P2P chat          │
+ │  → 选择社区        │ │  打开邀请链接     │ │    P2P 聊天           │
+ │  → 上传预密钥      │ │  → 连接社区服务器 │ │                      │
+ │  → 开始聊天        │ │  → 上传预密钥     │ │  (No server needed)  │
+ │                    │ │  → 聊天           │ │  （无需服务器）        │
+ └────────────────────┘ └──────────────────┘ └──────────────────────┘
+```
+
+**Note / 注意:** These paths are not mutually exclusive. A user can browse communities (Path A), join a friend's community (Path B), and have P2P chats (Path C) all at the same time. The client supports simultaneous connections to multiple communities and P2P peers.
+
+**注意：** 这些路径不是互斥的。用户可以同时浏览社区（路径 A）、加入朋友的社区（路径 B）和进行 P2P 聊天（路径 C）。客户端支持同时连接多个社区和 P2P 对等端。
+
+### 1.4 Cross-Mode Communication / 跨模式通讯
+
+NexusLink's isolation-by-design means that cross-community communication requires explicit action. Here are the four most common scenarios:
+
+NexusLink 的隔离设计意味着跨社区通讯需要明确的操作。以下是四种最常见的场景：
+
+**Scenario 1 / 场景 1: Alice (Community A) wants to chat with Bob (Community B) / Alice（社区 A）想和 Bob（社区 B）聊天**
+
+Communities are isolated by design. Community A's server cannot route messages to Community B's server. Solutions:
+
+社区在设计上是隔离的。社区 A 的服务器无法将消息路由到社区 B 的服务器。解决方案：
+
+| Solution / 解决方案 | How / 方式 |
+|---|---|
+| P2P Direct / P2P 直连 | Exchange keys out-of-band, connect via WebRTC / 带外交换密钥，通过 WebRTC 连接 |
+| Join same community / 加入同一社区 | One of them joins the other's community / 其中一人加入对方的社区 |
+| Official Plaza / 官方广场 | Both join the Directory Server's built-in community / 双方都加入目录服务器的内置社区 |
+
+**Scenario 2 / 场景 2: Alice met Bob in a community, wants private chat / Alice 在社区中认识了 Bob，想私聊**
+
+Two options:
+
+两种选择：
+
+1. **Via Community Server / 通过社区服务器** -- Use the community's 1:1 messaging. The server routes ciphertext but cannot read it. Metadata (who talks to whom, when) is visible to the community server. / 使用社区的一对一消息。服务器路由密文但无法读取。元数据（谁和谁聊、何时）对社区服务器可见。
+2. **Switch to P2P / 切换到 P2P** -- Exchange keys within the community chat, then establish a direct WebRTC connection. Zero metadata leakage after switching. / 在社区聊天中交换密钥，然后建立直接 WebRTC 连接。切换后零元数据泄露。
+
+**Scenario 3 / 场景 3: User migrates from Community A to Community B / 用户从社区 A 迁移到社区 B**
+
+- UUID remains unchanged (it is derived from the user's key pair, not from any server). / UUID 保持不变（它是从用户的密钥对派生的，不是从任何服务器派生的）。
+- Local chat history is preserved on the device (encrypted in SQLCipher). / 本地聊天记录保留在设备上（在 SQLCipher 中加密）。
+- The user simply connects to Community B's server and uploads prekeys. No "account migration" needed. / 用户只需连接到社区 B 的服务器并上传预密钥。无需"账户迁移"。
+
+**Scenario 4 / 场景 4: Community admin wants to read user chats / 社区管理员想查看用户聊天**
+
+Impossible by design. All messages are end-to-end encrypted. The Community Server only ever handles ciphertext. Even with full server access, an admin cannot decrypt any message because they do not possess users' private keys.
+
+在设计上不可能。所有消息都是端到端加密的。社区服务器只处理密文。即使拥有完全的服务器访问权限，管理员也无法解密任何消息，因为他们不拥有用户的私钥。
+
+### 1.5 Data Visibility Matrix / 数据流向矩阵
+
+This matrix shows exactly what each role in the system can and cannot see.
+
+此矩阵精确展示系统中每个角色能看到和不能看到的内容。
+
+| Data Item / 数据项 | Client / 客户端 | Community Server / 社区服务器 | Directory Server / 目录服务器 | P2P Peer / P2P 对等端 |
+|---|:---:|:---:|:---:|:---:|
+| Message plaintext / 消息明文 | ✓ | ✗ | ✗ | ✓ |
+| Message ciphertext / 消息密文 | ✓ | ✓ | ✗ | ✗ |
+| Sender UUID / 发送者 UUID | ✓ | ✓ | ✗ | ✓ |
+| Receiver UUID / 接收者 UUID | ✓ | ✓ | ✗ | ✓ |
+| Message timestamp / 消息时间戳 | ✓ | ✓ | ✗ | ✓ |
+| Online status / 在线状态 | ✓ | ✓ | ✗ | ✗ |
+| Community member list / 社区成员列表 | ✓ | ✓ | ✗ | ✗ |
+| User IP address / 用户 IP 地址 | ✗ | ✓ | ✓ (when accessing) | ✓ |
+| KYC status / KYC 状态 | ✓ | ✗ | ✓ | ✗ |
+| Community name & address / 社区名称与地址 | ✓ | ✓ (own only) | ✓ | ✗ |
+| Which communities joined / 加入了哪些社区 | ✓ | ✓ (own members only) | ✗ | ✗ |
+| Private key / 私钥 | ✓ | ✗ | ✗ | ✗ |
+
+**Reading the matrix / 阅读矩阵:**
+
+- ✓ = This role has access to this data / 该角色可以访问此数据
+- ✗ = This role cannot access this data by design / 该角色在设计上无法访问此数据
+- The Client sees everything about its own data because it is the origin of all encryption/decryption. / 客户端能看到关于自身数据的一切，因为它是所有加密/解密的起点。
+- The Private key row shows that only the Client ever holds the private key -- this is the foundation of the entire security model. / 私钥行显示只有客户端持有私钥——这是整个安全模型的基础。
+
 ---
 
 ## 2. Identity System / 身份系统
